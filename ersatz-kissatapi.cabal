@@ -1,4 +1,4 @@
-name: kissat
+name: ersatz-kissatapi
 
 version:         0.0.0
 build-type:      Simple
@@ -24,10 +24,10 @@ test-suite simple
   hs-source-dirs: test
   type: exitcode-stdio-1.0
   main-is: Simple.hs
-  build-depends: base, kissat
+  build-depends: base, ersatz-kissatapi
 
 test-suite knight
   hs-source-dirs: test
   type: exitcode-stdio-1.0
   main-is: knight.hs
-  build-depends: base, kissat, ersatz
+  build-depends: base, ersatz, ersatz-kissatapi
