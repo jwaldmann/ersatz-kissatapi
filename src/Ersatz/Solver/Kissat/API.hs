@@ -24,7 +24,7 @@ kissatapi problem = do
   let a = problem ^. lastAtom
       lit = API.MkLit . fromIntegral
   liftIO $ API.withNewSolverAsync $ \ solver -> do
-    -- API.minisat_set_verbosity solver 0
+    API.setOption solver "quiet" 1
     let cls = dimacsClauses problem
 
     let v = maximum $ map abs $ concatMap S.toList cls

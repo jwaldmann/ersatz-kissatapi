@@ -9,6 +9,7 @@ module Kissat.API where
 
 import Foreign.Ptr     ( Ptr, nullPtr )
 import Foreign.C.Types ( CInt(..) )
+import Foreign.C.String 
 import Control.Exception (bracket, finally, mask_, onException )
 import Control.Concurrent.Async
 import Control.Monad (forM_)
@@ -26,6 +27,8 @@ import Control.Monad (forM_)
 #define HTYPE_lit Lit
 #define CTYPE_var int
 #define HTYPE_var Var
+#define CTYPE_string ccp
+#define HTYPE_string CString
 
 newtype Solver = MkSolver (Ptr ())
 newtype Var    = MkVar CInt  deriving ( Eq, Ord, Num )
@@ -40,7 +43,7 @@ newtype Lit    = MkLit CInt  deriving ( Eq, Ord, Num )
 -- const char *kissat_signature (void);
 
 -- kissat *kissat_init (void);
-#unsafe kissat_init, 0, io(solver)
+#safe kissat_init, 0, io(solver)
 
 -- void kissat_add (kissat * solver, int lit);
 #unsafe kissat_add, 2(solver, lit), io(unit)
@@ -53,7 +56,7 @@ newtype Lit    = MkLit CInt  deriving ( Eq, Ord, Num )
 #unsafe kissat_value, 2(solver, lit), io(lit)
   
 -- void kissat_release (kissat * solver);
-#unsafe kissat_release, 1(solver), io(unit)
+#safe kissat_release, 1(solver), io(unit)
 
 -- void kissat_set_terminate (kissat * solver, void *state, int (*terminate) (void *state));
 
@@ -63,6 +66,9 @@ newtype Lit    = MkLit CInt  deriving ( Eq, Ord, Num )
 #safe kissat_terminate, 1(solver), io(unit)
 
 -- void kissat_reserve (kissat * solver, int max_var);
+
+-- int kissat_set_option (kissat * solver, const char *name, int new_value);
+#safe kissat_set_option, 3(solver, string, int), io(int)
 
 -- | Run a kissat instance in such a way that it is
 -- interruptable (by sending killThread).
@@ -80,6 +86,9 @@ withNewSolver h =
 
 newSolver = kissat_init
 deleteSolver = kissat_release
+setOption solver name value = do
+  cs <- newCString name
+  kissat_set_option solver cs value
 
 addClause :: Solver -> [Lit] -> IO ()
 addClause s xs = do

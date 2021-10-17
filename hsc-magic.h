@@ -5,6 +5,8 @@
 #define hsc_unsafe(name, args, res) GO(unsafe, name, args, res)
 #define hsc_safe(name, args, res) GO(safe, name, args, res)
 
+typedef const char * ccp; // ??
+
 #define GO(safety, name, args, res) \
     extern CTYPE_##res name(CTYPE_##args);     \
     printf("%s\n", STR(foreign import ccall safety name :: HTYPE_##args HTYPE_##res));
