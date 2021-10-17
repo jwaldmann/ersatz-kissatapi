@@ -25,6 +25,7 @@ kissatapi problem = do
       lit = API.MkLit . fromIntegral
   liftIO $ API.withNewSolverAsync $ \ solver -> do
     API.setOption solver "quiet" 1
+    API.setConfiguration solver "sat"
     let cls = dimacsClauses problem
 
     let v = maximum $ map abs $ concatMap S.toList cls

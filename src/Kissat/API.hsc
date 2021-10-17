@@ -70,6 +70,9 @@ newtype Lit    = MkLit CInt  deriving ( Eq, Ord, Num )
 -- int kissat_set_option (kissat * solver, const char *name, int new_value);
 #safe kissat_set_option, 3(solver, string, int), io(int)
 
+-- int kissat_set_configuration (kissat * solver, const char *name);
+#safe kissat_set_configuration, 2(solver, string), io(int)
+
 -- | Run a kissat instance in such a way that it is
 -- interruptable (by sending killThread).
 -- cf. https://github.com/niklasso/minisat-haskell-bindings/issues/1
@@ -89,6 +92,9 @@ deleteSolver = kissat_release
 setOption solver name value = do
   cs <- newCString name
   kissat_set_option solver cs value
+setConfiguration solver name = do
+  cs <- newCString name
+  kissat_set_configuration solver cs
 
 addClause :: Solver -> [Lit] -> IO ()
 addClause s xs = do
