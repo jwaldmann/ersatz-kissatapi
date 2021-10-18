@@ -21,7 +21,7 @@ import Control.Concurrent.Async
 
 data Setting
   = Configuration String
-  | Option String Int deriving Show
+  | Option String Int deriving (Read, Show, Eq, Ord)
 
 kissatapi :: MonadIO m => Solver SAT m
 kissatapi = kissatapi_with [ Configuration "sat", Option "quiet" 1 ]
