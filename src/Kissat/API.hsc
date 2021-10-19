@@ -14,7 +14,7 @@ import Control.Exception (bracket, finally, mask_, onException )
 import Control.Concurrent.Async
 import Control.Monad (forM_)
 
-#include "kissat.h"
+#include <kissat.h>
 #include "hsc-magic.h"
 
 #define CTYPE_solver kissat*

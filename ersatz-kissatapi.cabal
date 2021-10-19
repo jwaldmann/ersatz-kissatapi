@@ -6,18 +6,18 @@ cabal-version:   >= 1.10
 Synopsis:        A Haskell bundle of the Kissat SAT solver
 Category:        Logic
 License:         GPL-3-only
-extra-source-files: kissat/src/kissat.h hsc-magic.h
+extra-source-files: hsc-magic.h
 
 library
   hs-source-dirs: src
-  exposed-modules: Kissat.API
+  exposed-modules:
+    Kissat.API
     Ersatz.Solver.Kissat.API
   default-extensions: ForeignFunctionInterface
   build-depends:   base >= 3 && < 5, async, ersatz, containers, transformers, lens
-  -- C-sources:      
-  -- CC-options:      -D__STDC_LIMIT_MACROS -D__STDC_FORMAT_MACROS
+  include-dirs: . /opt/kissat/latest/include
+  extra-lib-dirs: /opt/kissat/latest/lib
   extra-libraries: kissat
-  include-dirs:    .
   default-language: Haskell2010
 
 test-suite simple
