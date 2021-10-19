@@ -1,4 +1,4 @@
-{-# language FlexibleContexts #-}
+{-# language FlexibleContexts, LambdaCase #-}
 
 module Ersatz.Solver.Kissat.API where
 
@@ -19,13 +19,21 @@ import System.IO
 import Control.Exception (bracket, finally, mask_, onException )
 import Control.Concurrent.Async
 
+data Setting
+  = Configuration String
+  | Option String Int deriving (Read, Show, Eq, Ord)
+
 kissatapi :: MonadIO m => Solver SAT m
-kissatapi problem = do
+kissatapi = kissatapi_with [ Configuration "sat", Option "quiet" 1 ]
+  
+kissatapi_with settings problem = do
   let a = problem ^. lastAtom
       lit = API.MkLit . fromIntegral
   liftIO $ API.withNewSolverAsync $ \ solver -> do
-    API.setOption solver "quiet" 1
-    API.setConfiguration solver "sat"
+    forM_ settings $ \ case
+      Configuration name -> API.setConfiguration solver name
+      Option name val ->   API.setOption solver name val
+
     let cls = dimacsClauses problem
 
     let v = maximum $ map abs $ concatMap S.toList cls
