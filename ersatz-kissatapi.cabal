@@ -15,8 +15,12 @@ library
     Ersatz.Solver.Kissat.API
   default-extensions: ForeignFunctionInterface
   build-depends:   base >= 3 && < 5, async, ersatz, containers, transformers, lens
-  include-dirs: . /opt/kissat/latest/include
-  extra-lib-dirs: /opt/kissat/latest/lib
+  -- if you have kissat.h and libkissat.a in a standard location (/usr/{include,lib})
+  -- (e.g., installed by your distribution's package manager)
+  -- then the compiler will find it. Else, use this:
+  --   include-dirs: . /opt/kissat/latest/include
+  --   extra-lib-dirs: /opt/kissat/latest/lib
+  -- or provide these as command line arguments to cabal or stack
   extra-libraries: kissat
   default-language: Haskell2010
 
