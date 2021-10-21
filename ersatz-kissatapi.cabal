@@ -16,7 +16,7 @@ library
   default-extensions: ForeignFunctionInterface
   build-depends:   base >= 3 && < 5, async, ersatz, containers, transformers, lens
   -- this is to find hsc-magic.h
-  include-dir: . 
+  include-dirs: . 
   -- if you have kissat.h and libkissat.a in a standard location (/usr/{include,lib})
   -- (e.g., installed by your distribution's package manager)
   -- then the compiler will find it. Else, use this:
