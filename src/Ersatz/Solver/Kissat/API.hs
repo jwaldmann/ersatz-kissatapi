@@ -1,9 +1,9 @@
-{-# language FlexibleContexts, LambdaCase #-}
+{-# language FlexibleContexts, LambdaCase, OverloadedStrings #-}
 
 module Ersatz.Solver.Kissat.API where
 
 import Control.Monad.IO.Class
-
+import qualified Data.Text as T
 import qualified Data.IntSet as S
 import qualified Data.IntMap as M
 
@@ -20,8 +20,8 @@ import Control.Exception (bracket, finally, mask_, onException )
 import Control.Concurrent.Async
 
 data Setting
-  = Configuration String
-  | Option String Int deriving (Read, Show, Eq, Ord)
+  = Configuration T.Text
+  | Option T.Text Int deriving (Read, Show, Eq, Ord)
 
 kissatapi :: MonadIO m => Solver SAT m
 kissatapi = kissatapi_with [ Configuration "sat", Option "quiet" 1 ]
@@ -31,8 +31,8 @@ kissatapi_with settings problem = do
       lit = API.MkLit . fromIntegral
   liftIO $ API.withNewSolverAsync $ \ solver -> do
     forM_ settings $ \ case
-      Configuration name -> API.setConfiguration solver name
-      Option name val ->   API.setOption solver name val
+      Configuration name -> API.setConfiguration solver (T.unpack name)
+      Option name val ->   API.setOption solver (T.unpack name) val
 
     let cls = dimacsClauses problem
 
