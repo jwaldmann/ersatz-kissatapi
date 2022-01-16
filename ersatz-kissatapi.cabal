@@ -37,3 +37,9 @@ test-suite knight
   type: exitcode-stdio-1.0
   main-is: knight.hs
   build-depends: base, ersatz, ersatz-kissatapi
+
+test-suite osc
+  hs-source-dirs: test
+  type: exitcode-stdio-1.0
+  main-is: osc.hs
+  build-depends: base, ersatz, array, ersatz-kissatapi
