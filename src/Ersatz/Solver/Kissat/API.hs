@@ -8,7 +8,7 @@ import qualified Data.IntSet as S
 import qualified Data.IntMap as M
 
 import Ersatz
-import Control.Lens 
+import Control.Lens hiding (Setting)
 import qualified Kissat.API as API
 import Control.Applicative ((<$>))
 
@@ -25,7 +25,8 @@ data Setting
 
 kissatapi :: MonadIO m => Solver SAT m
 kissatapi = kissatapi_with [ Configuration "sat", Option "quiet" 1 ]
-  
+
+kissatapi_with :: MonadIO m => [ Setting ] -> Solver SAT m
 kissatapi_with settings problem = do
   let a = problem ^. lastAtom
       lit = API.MkLit . fromIntegral
