@@ -1,13 +1,16 @@
 -- | compute oscillator for Conway's game of life, 
 -- cf. http://www.conwaylife.com/wiki/Category:Oscillators
--- example usage: ./dist/build/Life/Life 3 9 9 20
--- arguments are: period, width, height, number of life start cells
+-- example usage: ./dist/build/Life/Life 3 7
+-- arguments are: period, width, height, number of live start cells
+-- (or: cells in the rotor? TODO: introduce propert options parser)
 
 {-# language PatternSignatures #-}
 {-# language FlexibleContexts #-}
 {-# language OverloadedStrings #-}
 {-# language TupleSections #-}
 {-# language DataKinds #-}
+{-# language TypeFamilies #-}
+{-# language DefaultSignatures #-}
 
 import Prelude hiding ((&&),(||),not, or, and,all,any )
 import qualified Prelude
@@ -22,6 +25,7 @@ import Ersatz.Solver.Kissat.API
 import Control.Applicative
 import Control.Monad
 import Data.List ( tails, transpose )
+import GHC.TypeNats
 
 import System.Environment
 
@@ -29,11 +33,12 @@ import System.Environment
 import Control.Monad ( guard, when, forM, foldM, void )
 import System.Environment
 import Data.Ix ( range, inRange )
+import qualified Data.Map.Strict as M
 
 main :: IO ()
 main = void $ do
     argv <- getArgs
-    (Satisfied, Just gs) <-
+    (Satisfied, Just (stator, gs)) <-
       solveWith (kissatapi_with [ Configuration "sat" ]) $ case map read argv of
         []             -> osc 3 9 9 (Just 20)
         [ p, w       ] -> osc p w w Nothing
@@ -41,16 +46,21 @@ main = void $ do
         [ p, w, h, c ] -> osc p w h $ Just c
     forM ( zip [ 0..  ] gs ) $ \ (t, g) -> do
         putStrLn $ unwords [ "time", show t ]
-        printA g
+        printA stator g
 
-printA :: A.Array (Int,Int) Bool -> IO ()
-printA a = putStrLn $ unlines $ do
-         let ((u,l),(o,r)) = A.bounds a
+printA
+  :: A.Array (Int,Int) Bool
+  -> A.Array (Int,Int) Bool
+  -> IO ()
+printA stator rotor = putStrLn $ unlines $ do
+         let ((u,l),(o,r)) = A.bounds stator
          x <- [u .. o]
          return $ unwords $ do 
              y <- [ l ..r ]
-             return $ case a A.! (x,y) of
-                  True -> "O " ; False -> ". "
+             return $ case (stator A.! (x,y), rotor A.! (x,y)) of
+                  (False, False) -> ". "
+                  (False,  True) -> "X "
+                  (True,      _) -> "O "
 
 instance (A.Ix a, A.Ix b) => Equatable (R.Relation a b) where
   r === s = encode (R.bounds r == R.bounds s)
@@ -62,33 +72,104 @@ instance (A.Ix a, A.Ix b) => Orderable (R.Relation a b) where
 
 osc :: MonadSAT s m
     => Int -> Int -> Int -> Maybe Int
-    -> m  [ R.Relation Int Int ] 
+    -> m  (R.Relation Int Int, [ R.Relation Int Int ] )
 osc p w h mc = do
+  stator <- R.relation ((1,1),(w,h))
+  rotor <- R.relation ((1,1),(w,h))
   g0 <- R.relation ((1,1),(w,h))
-  case mc of
-    Just c -> assert $ C.atmost c $ R.elems g0
-    Nothing -> return ()
   let gs = take (p+1) $ iterate next g0
+  case mc of
+    Just c -> do
+      assert $ C.atmost c $ R.elems rotor
+      assert $ flip all gs $ \ g ->
+        R.difference g rotor === stator
+    Nothing -> return ()
   assert (head gs === last gs)
   assert $ all bordered gs
-  -- assert $ all (g0 <?) $ init $ tail gs
-  assert $ and $ do
+  assert $ all (R.implies stator) gs
+  when True $ assert $ all (g0 /==) $ init $ tail gs
+  when False $ assert $ all (g0 <?) $ init $ tail gs
+  when False $ assert $ and $ do
     t <- filter isPrime [ 2 .. p ]
     let (d,m) = divMod p t
     return $ if 0 == m then g0 /== gs!!d else true
-  return gs
+  return (stator, gs)
 
 isPrime n = all (\t -> 0 /= mod n t) $ takeWhile (\t -> t*t <= n) $ 2 : [3,5..]
 
-next :: R.Relation Int Int -> R.Relation Int Int
-next g =
-  let fc :: [[ B.Binary 3 ]]
+next = next_simple
+
+next_field :: R.Relation Int Int -> R.Relation Int Int
+next_field g =
+  let fc :: [[ N ]]
       fc = field_count $ to_field g
   in  R.build (R.bounds g) $ do
     ((i,j),x) <- R.assocs g
     let c = fc !! (i-1) !! (j-1)
-        v = c === encode 3 ||  (x &&  c === encode 4)
+        v = eqC 3 c ||  (x && eqC 4 c)
     return ((i,j),v)
+
+-- | one-hot encoding:
+-- number n is represented   by   xs!!n  being true.
+newtype N = N [Bit] 
+
+instance Num N where
+  fromInteger 0 = N [true]
+  N xs + N ys =
+    N $ M.elems $ M.fromListWith (||) $ do
+      (i,x) <- zip [0..] xs
+      (j,y) <- zip [0..] ys
+      return (i+j, x&&y)
+
+instance C.FromBit N where
+  fromBit b = N [not b, b]
+    
+instance Codec N where
+  type Decoded N = Integer
+  encode 0 = N [true]
+  decode s (N xs) = do
+    ys <- forM xs (decode s)
+    return $ fromIntegral $ length $ takeWhile not ys
+
+class (Codec n, Decoded n ~ Integer) => EqC n where
+  eqC :: Integer -> n -> Bit
+  default eqC :: Equatable n => Integer -> n -> Bit
+  eqC k n = encode k === n
+
+instance EqC N where
+  eqC i (N xs) =
+    let n = fromIntegral i
+    in  if n < length xs then xs !! n else false
+
+-- | order encoding:
+-- number n is represented   by   xs!!k iff k <= n
+newtype O = O [Bit] 
+
+instance Num O where
+  fromInteger 0 = O [true]
+  O xs + O ys =
+    O $ M.elems $ M.fromListWith (||) $ do
+      (i,x) <- zip [0..] xs
+      (j,y) <- zip [0..] ys
+      return (i+j, x&&y)
+
+instance C.FromBit O where
+  fromBit b = O [true, b]
+    
+instance Codec O where
+  type Decoded O = Integer
+  encode 0 = O [true]
+  decode s (O xs) = do
+    ys <- forM xs (decode s)
+    return $ fromIntegral $ pred $ length $ takeWhile id ys
+
+instance EqC O where
+  eqC n (O xs) =
+    let w = length xs
+        get j =
+          let i = fromIntegral j
+          in  if i < w then xs !! i else false
+    in  get n && not (get $ n+1)
 
 to_field g = do
   let ((u,l),(o,r)) = R.bounds g
@@ -138,23 +219,32 @@ next_simple g =
             i' <- [ i-1, i, i+1 ]
             j' <- [ j-1, j, j+1 ]
             guard $ i /= i' || j /= j'
-            return $ if A.inRange bnd (i',j') 
-               then g R.! (i', j')
-               else false
+            guard $  A.inRange bnd (i',j') 
+            return $ g R.! (i', j')
   in  R.build bnd $ do
     (i,x) <- R.assocs g
     return (i, step x $ neighbours i)
 
 -- | CNF 7756 vars 29693 clauses  37 sec
-step_naive x xs = let n = sumBits xs in (x && n === encode 2) || (n === encode 3)
+step_naive x xs =
+  let n = sumBits xs in (x && n === encode 2) || (n === encode 3)
 -- | CNF 6361 vars 35108 clauses   7 sec
-step_unary x xs = let cs = census xs in (x && cs !! 2)        || cs !! 3
+step_unary x xs =
+  let cs = census xs in (x && cs !! 2)        || cs !! 3
 -- | CNF 11953 vars 54222 clauses  1min52
 step_count x xs = x && C.exactly 2 xs || C.exactly 3 xs
--- | CNF 6475 vars 26312 clauses  21sec
-step_binary x xs =
-  let n :: B.Binary 2; n = sum $ map (\ x -> B.fromBits $ Bits [x]) xs
-  in  x && (n === encode 2) || (n === encode 3)
+
+step_spec x xs =
+  let n ::
+        B.Binary 2 -- CNF 6556 vars 26637 clauses  4 sec
+        -- U.Unary -- 4 CNF 8362 vars 41631 clauses 20 sec
+        -- O -- CNF 8107 vars 36988 clauses 9 sec
+        -- N -- CNF 10609 vars 44726 clauses 28 sec
+      n = sum $ map C.fromBit xs
+  in  x && (eqC 2 n) || (eqC 3 n)
+
+instance KnownNat w => EqC (B.Binary w)
+instance KnownNat w => EqC (U.Unary w)
 
 step = step_unary
 

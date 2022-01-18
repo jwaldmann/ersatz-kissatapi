@@ -42,4 +42,4 @@ test-suite osc
   hs-source-dirs: test
   type: exitcode-stdio-1.0
   main-is: osc.hs
-  build-depends: base, ersatz, array, ersatz-kissatapi
+  build-depends: base, ersatz, array, containers, ersatz-kissatapi
