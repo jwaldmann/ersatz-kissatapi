@@ -26,6 +26,7 @@ import Control.Applicative
 import Control.Monad
 import Data.List ( tails, transpose )
 import GHC.TypeNats
+import Text.Printf
 
 import System.Environment
 
@@ -38,29 +39,34 @@ import qualified Data.Map.Strict as M
 main :: IO ()
 main = void $ do
     argv <- getArgs
-    (Satisfied, Just (stator, gs)) <-
+    (Satisfied, Just (stator, rotor, gs)) <-
       solveWith (kissatapi_with [ Configuration "sat" ]) $ case map read argv of
-        []             -> osc 3 9 9 (Just 20)
-        [ p, w       ] -> osc p w w Nothing
-        [ p, w, h    ] -> osc p w h Nothing
-        [ p, w, h, c ] -> osc p w h $ Just c
+        []             -> osc 3 7 8 (Just 3) Nothing
+        [ p, w       ] -> osc p w w Nothing  Nothing
+        [ p, w, h    ] -> osc p w h Nothing  Nothing
+        [ p, w, h, r ] -> osc p w h (Just r) Nothing
+        [ p, w, h, r,s ] -> osc p w h (Just r) (Just s)
     forM ( zip [ 0..  ] gs ) $ \ (t, g) -> do
         putStrLn $ unwords [ "time", show t ]
-        printA stator g
+        printA rotor g
+    printf "rotor: %d, stator: %d\n" (count rotor) (count stator)
+
+count a = length $ filter id $ A.elems a
 
 printA
   :: A.Array (Int,Int) Bool
   -> A.Array (Int,Int) Bool
   -> IO ()
-printA stator rotor = putStrLn $ unlines $ do
-         let ((u,l),(o,r)) = A.bounds stator
+printA rotor g = putStrLn $ unlines $ do
+         let ((u,l),(o,r)) = A.bounds rotor
          x <- [u .. o]
          return $ unwords $ do 
              y <- [ l ..r ]
-             return $ case (stator A.! (x,y), rotor A.! (x,y)) of
+             return $ case (rotor A.! (x,y), g A.! (x,y)) of
                   (False, False) -> ". "
-                  (False,  True) -> "X "
-                  (True,      _) -> "O "
+                  (False,  True) -> "O "
+                  (True,  False) -> "* "
+                  (True,   True) -> "X "
 
 instance (A.Ix a, A.Ix b) => Equatable (R.Relation a b) where
   r === s = encode (R.bounds r == R.bounds s)
@@ -71,33 +77,58 @@ instance (A.Ix a, A.Ix b) => Orderable (R.Relation a b) where
     && R.elems r <? R.elems s
 
 osc :: MonadSAT s m
-    => Int -> Int -> Int -> Maybe Int
-    -> m  (R.Relation Int Int, [ R.Relation Int Int ] )
-osc p w h mc = do
+    => Int -> Int -> Int -> Maybe Int -> Maybe Int
+    -> m  ( R.Relation Int Int
+          , R.Relation Int Int
+          , [ R.Relation Int Int ]
+          )
+osc p w h mr ms = do
   stator <- R.relation ((1,1),(w,h))
+  case ms of
+    Just s -> assert $ C.atmost s $ R.elems stator
+    Nothing -> return ()
   rotor <- R.relation ((1,1),(w,h))
+  case mr of
+    Just r -> assert $ C.atmost r $ R.elems rotor
+    Nothing -> return ()
   g0 <- R.relation ((1,1),(w,h))
   let gs = take (p+1) $ iterate next g0
-  case mc of
-    Just c -> do
-      assert $ C.atmost c $ R.elems rotor
-      assert $ flip all gs $ \ g ->
-        R.difference g rotor === stator
-    Nothing -> return ()
+  assert $ flip all gs $ \ g -> R.difference g rotor === stator
   assert (head gs === last gs)
   assert $ all bordered gs
-  assert $ all (R.implies stator) gs
-  when True $ assert $ all (g0 /==) $ init $ tail gs
-  when False $ assert $ all (g0 <?) $ init $ tail gs
+  when False $ assert $ all (g0 /==) $ init $ tail gs
+  when True $ assert $ all (g0 <?) $ init $ tail gs
   when False $ assert $ and $ do
     t <- filter isPrime [ 2 .. p ]
     let (d,m) = divMod p t
     return $ if 0 == m then g0 /== gs!!d else true
-  return (stator, gs)
+  return (stator, rotor, gs)
 
 isPrime n = all (\t -> 0 /= mod n t) $ takeWhile (\t -> t*t <= n) $ 2 : [3,5..]
 
-next = next_simple
+next = next_field_too
+
+next_field_too g =
+  let ((u,l),(d,r)) = R.bounds g
+      getf a i = if A.inRange (R.bounds a) i then a R.! i else false
+      gr :: A.Array (Int,Int)
+        -- N
+        -- O
+        (B.Binary 2)
+        -- (U.Unary 4)
+      gr = mka ((u-1,l),(d,r)) $ \ (i, j) ->
+        C.fromBit (getf g (i,j)) + C.fromBit (getf g (i+1,j))
+      gd = mka ((u,l-1),(d,r)) $ \ (i, j) ->
+        C.fromBit (getf g (i,j)) + C.fromBit (getf g (i,j+1))
+      getz a i = if A.inRange (A.bounds a) i
+        then a A.! i else encode 0
+  in  flip R.buildFrom (R.bounds g) $ \ i j ->
+        let x = g R.! (i,j)
+            n = (getz gr (i-1,j-1) + getz gd (i+1,j-1))
+              + (getz gr (i+0,j+1) + getz gd (i-1,j+0))
+        in  x && eqC 2 n || eqC 3 n
+
+mka bnd f = A.array bnd $ map (\i -> (i, f i)) $ A.range bnd
 
 next_field :: R.Relation Int Int -> R.Relation Int Int
 next_field g =
