@@ -107,6 +107,7 @@ osc p w h mr ms = do
 isPrime n = all (\t -> 0 /= mod n t) $ takeWhile (\t -> t*t <= n) $ 2 : [3,5..]
 
 next = next_field_too
+  -- next_simple step_unary
 
 next_field_too g =
   let ((u,l),(d,r)) = R.bounds g
@@ -124,8 +125,11 @@ next_field_too g =
         then a A.! i else encode 0
   in  flip R.buildFrom (R.bounds g) $ \ i j ->
         let x = g R.! (i,j)
-            n = (getz gr (i-1,j-1) + getz gd (i+1,j-1))
+            a = (getz gr (i-1,j-1) + getz gd (i+1,j-1))
               + (getz gr (i+0,j+1) + getz gd (i-1,j+0))
+            b = (getz gr (i+0,j-1) + getz gd (i-1,j-1))
+              + (getz gr (i-1,j+1) + getz gd (i+1,j+0))
+	    n = a 
         in  x && eqC 2 n || eqC 3 n
 
 mka bnd f = A.array bnd $ map (\i -> (i, f i)) $ A.range bnd
@@ -244,7 +248,7 @@ bordered g = and $ do
   guard $ length block == 3
   return $ not $ and block
 
-next_simple g = 
+next_simple step g = 
   let bnd = R.bounds g
       neighbours (i,j) = do
             i' <- [ i-1, i, i+1 ]
@@ -277,14 +281,13 @@ step_spec x xs =
 instance KnownNat w => EqC (B.Binary w)
 instance KnownNat w => EqC (U.Unary w)
 
-step = step_unary
-
-
 
 -- | census xs !! k <=> sumBits xs == k
 census [] = [true]
 census (x:xs) =
   let cs = census xs
-  in  zipWith (\ a b -> choose a b x)
+  in  take 4
+      $ zipWith (\ a b -> choose a b x)
         (cs <> [false]) ([false] <> cs)
+
 
