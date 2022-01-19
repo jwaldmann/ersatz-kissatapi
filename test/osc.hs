@@ -56,6 +56,7 @@ import Control.Monad ( guard, when, forM, foldM, void )
 import System.Environment
 import Data.Ix ( range, inRange )
 import qualified Data.Map.Strict as M
+import System.IO
 
 data Config =
   Config { period :: Int
@@ -136,6 +137,7 @@ osc conf = do
       printf "period %d, box %s, rotor: %d, stator: %d\n"
         (length gs-1) (show $ dim conf)
 	(length rotor) (length stator)
+      hFlush stdout  
       osc $ conf { stator_size = Just $ pred $ length stator }
     _ -> printf "done\n"
 
@@ -211,9 +213,9 @@ border g =
 isPrime n = all (\t -> 0 /= mod n t) $ takeWhile (\t -> t*t <= n) $ 2 : [3,5..]
 
 next =
-  -- next_field
+  next_field
   -- next_field_too
-  next_simple step_unary
+  -- next_simple step_unary
 
 next_field_too p g =
   let ((u,l),(d,r)) = R.bounds g
