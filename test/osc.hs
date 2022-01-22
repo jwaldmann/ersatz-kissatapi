@@ -4,7 +4,7 @@
 -- arguments are: period, width, height, number of live start cells
 -- (or: cells in the rotor? TODO: introduce propert options parser)
 
-{- nice example:
+{- nice example: 
 
 .  .  .  .  .  .  .  .  .  .  .  . 
 .  .  .  .  .  O  O  .  .  .  .  . 
@@ -20,6 +20,8 @@
 .  .  .  .  .  O  O  .  .  .  .  . 
 
 period 8, box (12,12), rotor: 8, stator: 28
+
+(this is known as R2D2)
 
 -}
 
@@ -138,7 +140,7 @@ osc conf = do
         (length gs-1) (show $ dim conf)
 	(length rotor) (length stator)
       hFlush stdout  
-      osc $ conf { stator_size = Just $ pred $ length stator }
+      osc $ conf { stator_size = Just $ pred $ length $ filter id $ A.elems $ gs !! 0 }
     _ -> printf "done\n"
 
 type Board = R.Relation Int Int
@@ -161,7 +163,9 @@ con c@Config { rotor_dim = Just (rw,rh) } = do
   assert $ g0 === next (not . inside) g0
   
   case stator_size c of
-    Just s -> assert $ C.atmost s $ R.elems g0
+    Just s -> do
+      assert $ C.atmost s $ R.elems g0
+      assert $ C.atmost s $ R.elems $ R.mirror g0	
     Nothing -> return ()
 
   let gs = take (period c + 1)
@@ -170,7 +174,8 @@ con c@Config { rotor_dim = Just (rw,rh) } = do
   assert $ all (equals_on wall g0) gs
   	 
   assert $ head gs === last gs
-  assert $ all (\g -> g0 <? g) $ init $ tail gs
+  -- assert $ all (\g -> g0 <? g) $ init $ tail gs
+  assert $ no_shorter_period (period c) rbnd $ init gs
 
   return gs
 
@@ -210,12 +215,25 @@ border g =
 	&& encode (not $ A.inRange (inner bnd) (i,j))
 
 
-isPrime n = all (\t -> 0 /= mod n t) $ takeWhile (\t -> t*t <= n) $ 2 : [3,5..]
+isPrime n
+  = all (\t -> 0 /= mod n t)
+  $ takeWhile (\t -> t*t <= n) $ 2 : [3,5..]
+
+prime_divisors n
+  = filter (\p -> 0 == mod n p && isPrime p) [ 2 .. n ]
+
+no_shorter_period p bnd gs =
+  flip any (A.range bnd) $ \ pos ->
+  flip all (prime_divisors p) $ \ t ->
+  let d = div p t in
+  flip any [0 .. length gs - 1 - d] $ \ i ->
+  (gs!!i) R.! pos /== (gs!!(i+d)) R.! pos
 
 next =
-  next_field
+  -- next_field
   -- next_field_too
   -- next_simple step_unary
+  next_simple step_spec
 
 next_field_too p g =
   let ((u,l),(d,r)) = R.bounds g
@@ -244,7 +262,7 @@ next_field_too p g =
 mka bnd f = A.array bnd $ map (\i -> (i, f i)) $ A.range bnd
 
 next_field p g = 
-  let fc :: [[ O ]]
+  let fc :: [[ N ]]
       fc = field_count $ to_field g
       ((u,l),_) = R.bounds g
   in  R.build (R.bounds g) $ do
