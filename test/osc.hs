@@ -63,10 +63,10 @@ import System.IO
 data Config =
   Config { period :: Int
          , dim :: (Int,Int)
-	 , rotor_dim :: Maybe (Int,Int)
-	 , rotor_size :: Maybe Int
-	 , stator_size :: Maybe Int
-	 } deriving (Show, Read)
+         , rotor_dim :: Maybe (Int,Int)
+         , rotor_size :: Maybe Int
+         , total_size :: Maybe Int
+         } deriving (Show, Read)
 
 
 
@@ -75,11 +75,11 @@ main = void $ do
     argv <- getArgs
     case  map read argv of
         []             -> osc $ Config 3 (7,8) Nothing (Just 3) Nothing
-	[ p, w, ww ] ->
-	  osc $ Config p (w,w) (Just (ww,ww)) Nothing Nothing
-	[ p, w, ww, hh ] ->
-	  osc $ Config p (w,w) (Just (ww,hh)) Nothing Nothing
-{-	  
+        [ p, w, ww ] ->
+          osc $ Config p (w,w) (Just (ww,ww)) Nothing Nothing
+        [ p, w, ww, hh ] ->
+          osc $ Config p (w,w) (Just (ww,hh)) Nothing Nothing
+{-        
         [ p, w       ] -> osc $ Config p (w,w) Nothing Nothing  Nothing
         [ p, w, h    ] -> osc $ Config p (w,h) Nothing Nothing  Nothing
         [ p, w, h, r ] -> osc $ Config p (w,h) Nothing (Just r) Nothing
@@ -99,7 +99,7 @@ printA rotor g = putStrLn $ unlines $ do
          x <- [u .. o]
          return $ unwords $ do 
              y <- [ l ..r ]
-	     let i = (x,y)
+             let i = (x,y)
              return $ case (S.member i rotor , g A.!i) of
                   (False, False) -> ". "
                   (False,  True) -> "O "
@@ -122,25 +122,26 @@ osc conf = do
       solveWith (kissatapi_with [ Configuration "sat"
                                 -- , Option "quiet" 1
                                 , Option "phase" 0
-				, Option "forcephase" 1
+                                , Option "forcephase" 1
                                 ]
                 ) $ con conf
   case status of
     Satisfied -> do
       let m = M.fromListWith (<>) $ do
-            g <- gs		     
-	    (i,x) <- A.assocs g
-	    return (i,S.singleton x)
-	  stator = M.keysSet $ M.filter (== S.singleton True) m
-	  rotor  = M.keysSet $ M.filter ((>1) . length) m
+            g <- gs                  
+            (i,x) <- A.assocs g
+            return (i,S.singleton x)
+          total =   length $ filter id $ A.elems $ gs !! 0 
+          stator = M.keysSet $ M.filter (== S.singleton True) m
+          rotor  = M.keysSet $ M.filter ((>1) . length) m
       forM ( zip [ 0..  ] gs ) $ \ (t, g) -> do
         putStrLn $ unwords [ "time", show t ]
         printA rotor g
-      printf "period %d, box %s, rotor: %d, stator: %d\n"
+      printf "period: %d, box: %s, total: %d, rotor: %d, stator: %d\n"
         (length gs-1) (show $ dim conf)
-	(length rotor) (length stator)
+        total (length rotor) (length stator)
       hFlush stdout  
-      osc $ conf { stator_size = Just $ pred $ length $ filter id $ A.elems $ gs !! 0 }
+      osc $ conf { total_size = Just $ pred total }
     _ -> printf "done\n"
 
 type Board = R.Relation Int Int
@@ -148,54 +149,39 @@ type Board = R.Relation Int Int
 con :: MonadSAT s m
     => Config
     -> m [ Board ]
-con c@Config { rotor_dim = Just (rw,rh) } = do
+con c = do
   let (w,h) = dim c
       bnd = ((1,1), (w,h))
-  let mid@(mw,mh) = (div (1+w) 2, div (1+h) 2)
-      (u,d) =  (mw - div rw 2, mh - div rh 2)
-      rbnd = ((u,d),(u+rw+1,d+rh+1))
-  g0 <- R.relation bnd
-  assert $ bordered g0
-  
-  let inside = A.inRange (inner rbnd)
-      inside_or_wall = A.inRange rbnd
-      wall p = not (inside p) && inside_or_wall p
-  assert $ g0 === next (not . inside) g0
-  
-  case stator_size c of
-    Just s -> do
-      assert $ C.atmost s $ R.elems g0
-      assert $ C.atmost s $ R.elems $ R.mirror g0	
-    Nothing -> return ()
 
-  let gs = take (period c + 1)
-         $ iterate (next inside_or_wall  ) g0
-
-  assert $ all (equals_on wall g0) gs
-  	 
-  assert $ head gs === last gs
-  -- assert $ all (\g -> g0 <? g) $ init $ tail gs
-  assert $ no_shorter_period (period c) rbnd $ init gs
-
-  return gs
-
-con c@Config { rotor_dim = Nothing } = do
-  let bnd = ((1,1), dim c)
-  stator <- R.relation bnd
-  case stator_size c of
-    Just s -> assert $ C.atmost s $ R.elems stator
-    Nothing -> return ()
-  rotor <- R.relation bnd
-  case rotor_size c of
-    Just r -> assert $ C.atmost r $ R.elems rotor
-    Nothing -> return ()
-  g0 <- R.relation bnd
-  let gs = take (period c + 1) $ iterate (next $ const True) g0
-  assert $ flip all gs $ \ g -> R.difference g rotor === stator
-  assert (head gs === last gs)
+  gs <- case rotor_dim c of
+    Nothing -> replicateM (period c + 1) $ R.relation bnd
+    Just (rw,rh) -> do
+      g0 <- R.relation bnd
+      let (mw,mh) = (div (1+w) 2, div (1+h) 2)
+          (u,d) =  (mw - div rw 2, mh - div rh 2)
+          rbnd = ((u+1,d+1),(u+rw,d+rh))
+      hs <- replicateM (period c + 1) $ R.relation rbnd    
+      return $ map (with g0) hs
+        
   assert $ all bordered gs
-  assert $ all (g0 <?) $ init $ tail gs
+  
+  assert $ head gs === last gs
+
+  assert $ flip all (zip gs $ tail gs) $ \ (g,h) -> 
+    flip all (R.assocs g) $ \ (pos, x) ->
+      let n = sumBits $ neighbours g pos
+      in  h R.! pos === (x && (encode 2 === n) || (encode 3 === n))
+    
+  assert $ case total_size c of
+    Nothing -> true
+    Just s -> C.atmost s $ R.elems $ head gs
+
+  assert $ no_shorter_period (period c) bnd $ init gs
+
   return gs
+
+
+
 
 equals_on p r s = and $ do
   i <- R.indices r
@@ -212,7 +198,7 @@ border g =
   let bnd@((u,l),(d,r)) = R.bounds g
   in  flip R.buildFrom (R.bounds g) $ \ i j ->
         (g R.! (i,j))
-	&& encode (not $ A.inRange (inner bnd) (i,j))
+        && encode (not $ A.inRange (inner bnd) (i,j))
 
 
 isPrime n
@@ -251,12 +237,12 @@ next_field_too p g =
         then a A.! i else encode 0
   in  flip R.buildFrom (R.bounds g) $ \ i j ->
         let pos = (i,j)
-	    x = g R.! (i,j)
+            x = g R.! (i,j)
             a = (getz gr (i-1,j-1) + getz gd (i+1,j-1))
               + (getz gr (i+0,j+1) + getz gd (i-1,j+0))
             b = (getz gr (i+0,j-1) + getz gd (i-1,j-1))
               + (getz gr (i-1,j+1) + getz gd (i+1,j+0))
-	    n = if mod i 4 `elem` [0,1] then a else b
+            n = if mod i 4 `elem` [0,1] then a else b
         in  if p pos then x && eqC 2 n || eqC 3 n else x
 
 mka bnd f = A.array bnd $ map (\i -> (i, f i)) $ A.range bnd
