@@ -52,13 +52,15 @@ import Text.Printf
 import qualified Data.Set as S
 import qualified Data.Map.Strict as M
 import System.Environment
-
+import System.Directory
 
 import Control.Monad ( guard, when, forM, foldM, void )
 import System.Environment
 import Data.Ix ( range, inRange )
 import qualified Data.Map.Strict as M
 import System.IO
+import System.FilePath
+import Data.Hashable
 
 data Config =
   Config { period :: Int
@@ -75,6 +77,8 @@ main = void $ do
     argv <- getArgs
     case  map read argv of
         []             -> osc $ Config 3 (7,8) Nothing (Just 3) Nothing
+        [ p, w ] ->
+          osc $ Config p (w,w) (Just (w,w)) Nothing Nothing
         [ p, w, ww ] ->
           osc $ Config p (w,w) (Just (ww,ww)) Nothing Nothing
         [ p, w, ww, hh ] ->
@@ -93,8 +97,8 @@ count a = length $ filter id $ A.elems a
 printA
   :: S.Set (Int,Int) 
   -> A.Array (Int,Int) Bool
-  -> IO ()
-printA rotor g = putStrLn $ unlines $ do
+  -> [String]
+printA rotor g = do
          let ((u,l),(o,r)) = A.bounds g
          x <- [u .. o]
          return $ unwords $ do 
@@ -134,12 +138,20 @@ osc conf = do
           total =   length $ filter id $ A.elems $ gs !! 0 
           stator = M.keysSet $ M.filter (== S.singleton True) m
           rotor  = M.keysSet $ M.filter ((>1) . length) m
-      forM ( zip [ 0..  ] gs ) $ \ (t, g) -> do
-        putStrLn $ unwords [ "time", show t ]
-        printA rotor g
-      printf "period: %d, box: %s, total: %d, rotor: %d, stator: %d\n"
-        (length gs-1) (show $ dim conf)
-        total (length rotor) (length stator)
+      let header =
+	    printf "period: %d, box: %s, total: %d, rotor: %d, stator: %d\n"
+            (length gs-1) (show $ dim conf)
+            total (length rotor) (length stator)
+	  info = unlines $ header : do
+	    (t,g) <- zip [ 0..  ] gs
+	    ( printf "time %s" (show t) : printA rotor g )
+      let d = ("p" <> show (period conf))
+             </> ("s" <> show total)
+	  fn = d </> (show $ hash $ map A.elems gs) <.> "text"
+      createDirectoryIfMissing True d 
+      writeFile fn info
+      putStrLn info
+      printf "written to %s\n" fn
       hFlush stdout  
       osc $ conf { total_size = Just $ pred total }
     _ -> printf "done\n"
@@ -153,35 +165,90 @@ con c = do
   let (w,h) = dim c
       bnd = ((1,1), (w,h))
 
-  gs <- case rotor_dim c of
-    Nothing -> replicateM (period c + 1) $ R.relation bnd
+  (fixed, gs) <- case rotor_dim c of
+    Nothing -> do
+      gs <- replicateM (period c + 1) $ R.relation bnd
+      return (const false, gs)
     Just (rw,rh) -> do
       g0 <- R.relation bnd
       let (mw,mh) = (div (1+w) 2, div (1+h) 2)
           (u,d) =  (mw - div rw 2, mh - div rh 2)
           rbnd = ((u+1,d+1),(u+rw,d+rh))
       hs <- replicateM (period c + 1) $ R.relation rbnd    
-      return $ map (with g0) hs
+      return (not . A.inRange rbnd, map (with g0) hs)
         
   assert $ all bordered gs
   
   assert $ head gs === last gs
 
-  assert $ flip all (zip gs $ tail gs) $ \ (g,h) -> 
-    flip all (R.assocs g) $ \ (pos, x) ->
-      let n = sumBits $ neighbours g pos
-      in  h R.! pos === (x && (encode 2 === n) || (encode 3 === n))
+  let
+    matches (g,h) pos = do
+      let x = g R.! pos
+          xs = neighbours g pos
+	  d = length xs
+	  x' = h R.! pos
+      forM_ (seqs (length xs - 1) xs) $ \ zs ->
+        assert $ or $ not x' :         zs
+
+--      m1 <- atmost 1 xs
+--      assert $ or [ not x', not m1 ]
+      l2 <- atleast 2 xs ; m2 <- atmost  2 xs
+      assert $ or [ not x',     x, not l2, not m2 ]
+      assert $ or [     x', not x, not l2, not m2 ]
+      let { l3 = not m2 } ; m3 <- atmost  3 xs
+      assert $ or [     x',        not l3, not m3 ]
+--      let { l4 = not m3 }
+--      assert $ or [ not x', not l4 ]
+      forM_ (seqs 4 xs) $ \ zs ->
+        assert $ or $ not x' : map not zs
+{-      
+
+      forM_ (replicateM d [False,True]) $ \ bs -> do
+        let w = length $ filter id bs
+	    form = zipWith (\b x -> if b then not x else x)
+	                   bs xs
+	case w of
+	  0 -> assert $ or $ not x' : form
+	  1 -> assert $ or $ not x' : form
+	  2 -> do
+	    assert $ or $ x' : not x : form
+	    assert $ or $ not x' : x : form
+	  3 -> assert $ or $ x' : form
+          _ -> return ()
+-}	
+
+    matches (g, h) pos =
+        assert $ h R.! pos ===
+	    step_unary (g R.! pos) (neighbours g pos)
+  
+  forM_ (A.range bnd) $ \ pos ->
+    if fixed pos && all fixed (neighbours_pos (head gs) pos)
+    then matches (head gs, head gs) pos
+    else forM_ (zip gs $ tail gs) $ \ (g,h) -> 
+       matches (g,h) pos
     
   assert $ case total_size c of
     Nothing -> true
     Just s -> C.atmost s $ R.elems $ head gs
 
-  assert $ no_shorter_period (period c) bnd $ init gs
+  assert $ no_shorter_period (period c)
+    (filter (not . fixed) $ A.range bnd) $ init gs
 
   return gs
 
 
+seqs 0 _ = return []
+seqs k [] = []
+seqs k (x:xs) = seqs k xs <> fmap (x:) (seqs (k-1) xs)
 
+atleast k xs = do
+  e <- exists
+  forM_ (seqs k xs) $ \ ys ->
+    assert $ or $ e : map not ys
+  forM_ (seqs (length xs - (k - 1)) xs) $ \ ys ->
+    assert $ or $ not e : ys
+  return e  
+atmost k xs = atleast (length xs - k) $ map not xs
 
 equals_on p r s = and $ do
   i <- R.indices r
@@ -208,8 +275,16 @@ isPrime n
 prime_divisors n
   = filter (\p -> 0 == mod n p && isPrime p) [ 2 .. n ]
 
-no_shorter_period p bnd gs =
-  flip any (A.range bnd) $ \ pos ->
+-- | globally different (the picture as maximal period)
+no_shorter_period p ps gs =
+  flip all (prime_divisors p) $ \ t ->
+  let d = div p t in
+  flip any ps $ \ pos ->
+  (gs!!0) R.! pos /== (gs!!d) R.! pos
+
+-- | there is a cell of maximal period
+no_shorter_period p ps gs =
+  flip any ps $ \ pos ->
   flip all (prime_divisors p) $ \ t ->
   let d = div p t in
   flip any [0 .. length gs - 1 - d] $ \ i ->
@@ -366,12 +441,15 @@ next_simple step p g =
     (i,x) <- R.assocs g
     return (i, if p i then step x $ neighbours g i else x)
 
-neighbours g (i,j) = do
+neighbours g pos =
+  map (g R.!) $ neighbours_pos g pos
+
+neighbours_pos g (i,j) = do
             i' <- [ i-1, i, i+1 ]
             j' <- [ j-1, j, j+1 ]
             guard $ i /= i' || j /= j'
             guard $  A.inRange (R.bounds g) (i',j') 
-            return $ g R.! (i', j')
+            return (i', j')
 
 -- | CNF 7756 vars 29693 clauses  37 sec
 step_naive x xs =
