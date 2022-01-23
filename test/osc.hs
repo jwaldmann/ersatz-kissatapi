@@ -32,10 +32,14 @@ period 8, box (12,12), rotor: 8, stator: 28
 {-# language TupleSections #-}
 {-# language DataKinds #-}
 {-# language TypeFamilies #-}
+{-# language TypeApplications #-}
+{-# language ScopedTypeVariables #-}
+{-# language AllowAmbiguousTypes #-}
 {-# language DefaultSignatures #-}
 
 import Prelude hiding ((&&),(||),not, or, and,all,any )
 import qualified Prelude
+import qualified Data.Bool as DB
 import Ersatz
 import qualified Ersatz.Relation as R
 import qualified Data.Array as A
@@ -61,28 +65,38 @@ import qualified Data.Map.Strict as M
 import System.IO
 import System.FilePath
 import Data.Hashable
+import Options.Applicative
+import Control.Concurrent.Async
 
 data Config =
   Config { period :: Int
          , dim :: (Int,Int)
-         , rotor_dim :: Maybe (Int,Int)
+         , rotor_dim :: (Int,Int)
          , rotor_size :: Maybe Int
          , total_size :: Maybe Int
+	 , match_type :: Match_Type
          } deriving (Show, Read)
 
-
+c0 = Config { period  = 3
+            , dim = (8,8)
+	    , rotor_dim = (4,4)
+	    , rotor_size = Nothing
+	    , total_size = Just 20
+	    , match_type = Onehot
+	    }
 
 main :: IO ()
 main = void $ do
     argv <- getArgs
     case  map read argv of
-        []             -> osc $ Config 3 (7,8) Nothing (Just 3) Nothing
+        []             -> osc $ c0
         [ p, w ] ->
-          osc $ Config p (w,w) (Just (w,w)) Nothing Nothing
+          osc $ c0 { period = p, dim = (w,w), rotor_dim=(w,w) }
         [ p, w, ww ] ->
-          osc $ Config p (w,w) (Just (ww,ww)) Nothing Nothing
+          osc $ c0 { period = p, dim = (w,w), rotor_dim=(ww,ww)  }
         [ p, w, ww, hh ] ->
-          osc $ Config p (w,w) (Just (ww,hh)) Nothing Nothing
+          osc $ c0 { period = p, dim = (w,w), rotor_dim=(ww,hh)  }
+	  
 {-        
         [ p, w       ] -> osc $ Config p (w,w) Nothing Nothing  Nothing
         [ p, w, h    ] -> osc $ Config p (w,h) Nothing Nothing  Nothing
@@ -90,7 +104,7 @@ main = void $ do
         [ p, w, h, r,s ] -> osc $ Config p (w,h) Nothing (Just r) (Just s)
 -}
 
-test = osc $ Config 3 (8,8) (Just (2,2)) Nothing  Nothing
+test = osc $ c0 
 
 count a = length $ filter id $ A.elems a
 
@@ -118,17 +132,25 @@ instance (A.Ix a, A.Ix b) => Orderable (R.Relation a b) where
   r <? s = encode (R.bounds r == R.bounds s)
     && R.elems r <? R.elems s
 
-osc
-  :: Config
-  -> IO ()
-osc conf = do
-  (status, Just gs) <-
-      solveWith (kissatapi_with [ Configuration "sat"
+
+parallel conf methods = do
+  as <- forM methods $ \ m -> async $ do
+      fmap (m,) $ solveWith (kissatapi_with [ Configuration "sat"
                                 -- , Option "quiet" 1
                                 , Option "phase" 0
                                 , Option "forcephase" 1
                                 ]
-                ) $ con conf
+                ) $ con $ conf { match_type = m }
+  (_, out) <- waitAnyCancel as
+  return out
+  
+
+osc
+  :: Config
+  -> IO ()
+osc conf = do
+  (mt, (status, Just gs))
+    <- parallel conf match_types
   case status of
     Satisfied -> do
       let m = M.fromListWith (<>) $ do
@@ -139,9 +161,9 @@ osc conf = do
           stator = M.keysSet $ M.filter (== S.singleton True) m
           rotor  = M.keysSet $ M.filter ((>1) . length) m
       let header =
-	    printf "period: %d, box: %s, total: %d, rotor: %d, stator: %d\n"
+	    printf "period: %d, box: %s, total: %d, rotor: %d, stator: %d, match_type: %s\n"
             (length gs-1) (show $ dim conf)
-            total (length rotor) (length stator)
+            total (length rotor) (length stator) (show mt)
 	  info = unlines $ header : do
 	    (t,g) <- zip [ 0..  ] gs
 	    ( printf "time %s" (show t) : printA rotor g )
@@ -165,77 +187,137 @@ con c = do
   let (w,h) = dim c
       bnd = ((1,1), (w,h))
 
-  (fixed, gs) <- case rotor_dim c of
-    Nothing -> do
-      gs <- replicateM (period c + 1) $ R.relation bnd
-      return (const false, gs)
-    Just (rw,rh) -> do
-      g0 <- R.relation bnd
-      let (mw,mh) = (div (1+w) 2, div (1+h) 2)
-          (u,d) =  (mw - div rw 2, mh - div rh 2)
-          rbnd = ((u+1,d+1),(u+rw,d+rh))
-      hs <- replicateM (period c + 1) $ R.relation rbnd    
-      return (not . A.inRange rbnd, map (with g0) hs)
+  let (rw,rh) = rotor_dim c
+  g0 <- R.relation bnd
+  let (mw,mh) = (div (1+w) 2, div (1+h) 2)
+      (u,d) =  (mw - div rw 2, mh - div rh 2)
+      rbnd = ((u+1,d+1),(u+rw,d+rh))
+  hs <- replicateM (period c + 1) $ R.relation rbnd    
+  let fixed = not . A.inRange rbnd
+  let gs = map (with g0) hs
         
   assert $ all bordered gs
   
   assert $ head gs === last gs
 
-  let
-    matches (g,h) pos = do
-      let x = g R.! pos
-          xs = neighbours g pos
-	  d = length xs
-	  x' = h R.! pos
-      forM_ (seqs (length xs - 1) xs) $ \ zs ->
-        assert $ or $ not x' :         zs
-
---      m1 <- atmost 1 xs
---      assert $ or [ not x', not m1 ]
-      l2 <- atleast 2 xs ; m2 <- atmost  2 xs
-      assert $ or [ not x',     x, not l2, not m2 ]
-      assert $ or [     x', not x, not l2, not m2 ]
-      let { l3 = not m2 } ; m3 <- atmost  3 xs
-      assert $ or [     x',        not l3, not m3 ]
---      let { l4 = not m3 }
---      assert $ or [ not x', not l4 ]
-      forM_ (seqs 4 xs) $ \ zs ->
-        assert $ or $ not x' : map not zs
-{-      
-
-      forM_ (replicateM d [False,True]) $ \ bs -> do
-        let w = length $ filter id bs
-	    form = zipWith (\b x -> if b then not x else x)
-	                   bs xs
-	case w of
-	  0 -> assert $ or $ not x' : form
-	  1 -> assert $ or $ not x' : form
-	  2 -> do
-	    assert $ or $ x' : not x : form
-	    assert $ or $ not x' : x : form
-	  3 -> assert $ or $ x' : form
-          _ -> return ()
--}	
-
-    matches (g, h) pos =
-        assert $ h R.! pos ===
-	    step_unary (g R.! pos) (neighbours g pos)
-  
   forM_ (A.range bnd) $ \ pos ->
     if fixed pos && all fixed (neighbours_pos (head gs) pos)
-    then matches (head gs, head gs) pos
+    then matches (match_type c) (head gs, head gs) pos
     else forM_ (zip gs $ tail gs) $ \ (g,h) -> 
-       matches (g,h) pos
+       matches (match_type c) (g,h) pos
     
   assert $ case total_size c of
     Nothing -> true
     Just s -> C.atmost s $ R.elems $ head gs
 
-  assert $ no_shorter_period (period c)
+  assert $ no_shorter_period_C (period c)
     (filter (not . fixed) $ A.range bnd) $ init gs
 
   return gs
 
+data Match_Type = Onehot | Flat | Atmo | Step Step
+  deriving (Read, Show)
+
+match_types = [ Onehot, Flat, Atmo ]  <> fmap Step step_types
+
+matches Onehot (g,h) pos = do
+      let x = g R.! pos
+          xs = neighbours g pos
+	  d = length xs
+	  x' = h R.! pos
+      c <- count4' xs ; let { cs = contents c }
+      assert $ or [ not x',    not $ cs !! 0 ]
+      assert $ or [ not x',    not $ cs !! 1 ]
+      assert $ or [ not x', x, not $ cs !! 2 ]
+      assert $ or [ x', not x, not $ cs !! 2 ]
+      assert $ or [ x',        not $ cs !! 3 ]
+      assert $ or [ not x',    not $ cs !! 4 ]
+
+matches Flat (g,h) pos = do
+      let x = g R.! pos
+          xs = neighbours g pos
+	  d = length xs
+	  x' = h R.! pos
+      forM_ (seqs 4 xs) $ \ ys ->
+        assert $ or $ not x' : map not ys
+      forM_ (seqs (d-1) xs) $ \ ys ->
+        assert $ or $ not x' : ys
+      forM_ (replicateM d [False,True]) $ \ bs -> do
+        let form = zipWith ($) (map (DB.bool id not) bs) xs
+	case length $ filter id bs of
+	  2 -> do
+	    assert $ or $ not x' :     x : form
+	    assert $ or $     x' : not x : form
+          3 -> do
+	    assert $ or $     x' :         form
+	  _ -> return ()  
+  
+matches Atmo (g,h) pos = do
+      let x = g R.! pos
+          xs = neighbours g pos
+	  d = length xs
+	  x' = h R.! pos
+      m1 <- atmost 1 xs
+      assert $ or [ not x', not m1 ]
+      let { l2 = not m1 } ; m2 <- atmost  2 xs
+      assert $ or [ not x',     x, not l2, not m2 ]
+      assert $ or [     x', not x, not l2, not m2 ]
+      let { l3 = not m2 } ; m3 <- atmost  3 xs
+      assert $ or [     x',        not l3, not m3 ]
+      let { l4 = not m3 }
+      assert $ or [ not x', not l4 ]
+
+matches (Step s) (g,h) pos = do
+      let x = g R.! pos
+          xs = neighbours g pos
+	  d = length xs
+	  x' = h R.! pos
+      assert $ x' === -- step_spec
+                      step_unary
+                      x xs             
+
+
+-- | one-hot encoding for numbers 0, 1, 2, 3, >=4
+newtype OH4 = OH4
+  { contents :: [Bit] -- ^ length 5
+  }
+
+oh4 :: MonadSAT s m => m OH4
+oh4 = do
+  xs <- replicateM 5 exists
+  assert $ or xs
+  forM_ (seqs 2 xs) $ \ ys -> assert $ or $ map not xs
+  return $ OH4 xs
+
+count4' xs =
+  if length xs <= 4 then count4 xs
+  else do
+    let (pre,post) = splitAt (div (length xs) 2) xs
+    a <- count4' pre
+    b <- count4' post
+    plus a b
+
+count4 :: MonadSAT s m => [Bit] -> m OH4
+count4 xs = do
+  c <- oh4
+  forM_ (replicateM (length xs) [False,True]) $ \ bs -> do
+     let n = min 4 $ length $ filter id bs
+         form = zipWith ($) (map (DB.bool id not) bs) xs
+     forM_ [0..4] $ \ k -> do
+       let t = contents c !! k
+       assert $ or $ (if k==n then t else not t) : form
+  return c     
+
+plus ::  MonadSAT s m => OH4 -> OH4 -> m OH4
+plus a b = do
+  c <- oh4
+  forM_ (zip [0..] $ contents a) $ \ (i,x) ->
+    forM_ (zip [0..] $ contents b) $ \ (j,y) -> do
+      let n = min 4 $ i + j
+      forM_ [0..4] $ \ k -> do
+        let t = contents c !! k
+	assert $ or $ [if k==n then t else not t, not x, not y ]
+  return c	
 
 seqs 0 _ = return []
 seqs k [] = []
@@ -276,25 +358,27 @@ prime_divisors n
   = filter (\p -> 0 == mod n p && isPrime p) [ 2 .. n ]
 
 -- | globally different (the picture as maximal period)
-no_shorter_period p ps gs =
+no_shorter_period_A p ps gs =
+  flip all (init $ tail gs) $ \ h ->
+  flip any ps $ \ pos ->
+  head gs R.! pos /== h R.! pos
+
+-- | globally different (the picture as maximal period)
+no_shorter_period_B p ps gs =
   flip all (prime_divisors p) $ \ t ->
   let d = div p t in
   flip any ps $ \ pos ->
   (gs!!0) R.! pos /== (gs!!d) R.! pos
 
 -- | there is a cell of maximal period
-no_shorter_period p ps gs =
+no_shorter_period_C p ps gs =
   flip any ps $ \ pos ->
   flip all (prime_divisors p) $ \ t ->
   let d = div p t in
   flip any [0 .. length gs - 1 - d] $ \ i ->
   (gs!!i) R.! pos /== (gs!!(i+d)) R.! pos
 
-next =
-  -- next_field
-  -- next_field_too
-  -- next_simple step_unary
-  next_simple step_spec
+
 
 next_field_too p g =
   let ((u,l),(d,r)) = R.bounds g
@@ -451,6 +535,11 @@ neighbours_pos g (i,j) = do
             guard $  A.inRange (R.bounds g) (i',j') 
             return (i', j')
 
+data Step = Naive | Unary | Count | Spec Spec
+  deriving (Read, Show)
+
+step_types = [ Naive, Unary, Count ] <> fmap Spec spec_types
+
 -- | CNF 7756 vars 29693 clauses  37 sec
 step_naive x xs =
   let n = sumBits xs in (x && n === encode 2) || (n === encode 3)
@@ -460,10 +549,24 @@ step_unary x xs =
 -- | CNF 11953 vars 54222 clauses  1min52
 step_count x xs = x && C.exactly 2 xs || C.exactly 3 xs
 
-step_spec x xs =
-  let n ::
-        B.Binary 2 -- CNF 6556 vars 26637 clauses  4 sec
-        -- U.Unary -- 4 CNF 8362 vars 41631 clauses 20 sec
+data Spec = BB | UU | OO | NN
+  deriving (Read, Show, Enum, Bounded)
+
+spec_types = [minBound .. maxBound @Spec]
+
+step_spec BB = step_spec_imp @(B.Binary 2)
+step_spec UU = step_spec_imp @(U.Unary 4)
+step_spec NN = step_spec_imp @(N)
+step_spec OO = step_spec_imp @(O)
+
+step_spec_imp
+  :: forall t
+  . (C.FromBit t, EqC t, Num t)
+  => Bit -> [Bit] -> Bit
+step_spec_imp x xs = 
+  let n :: t
+        -- B.Binary 2 -- CNF 6556 vars 26637 clauses  4 sec
+        -- U.Unary 4 -- CNF 8362 vars 41631 clauses 20 sec
         -- O -- CNF 8107 vars 36988 clauses 9 sec
         -- N -- CNF 10609 vars 44726 clauses 28 sec
       n = sum $ map C.fromBit xs
