@@ -74,7 +74,7 @@ data Config =
          , rotor_dim :: (Int,Int)
          , rotor_size :: Maybe Int
          , total_size :: Maybe Int
-	 , match_type :: Match_Type
+	 , spec :: Spec
          } deriving (Show, Read)
 
 c0 = Config { period  = 3
@@ -82,7 +82,7 @@ c0 = Config { period  = 3
 	    , rotor_dim = (4,4)
 	    , rotor_size = Nothing
 	    , total_size = Just 20
-	    , match_type = Onehot
+	    , spec = BB
 	    }
 
 main :: IO ()
@@ -94,8 +94,10 @@ main = void $ do
           osc $ c0 { period = p, dim = (w,w), rotor_dim=(w,w) }
         [ p, w, ww ] ->
           osc $ c0 { period = p, dim = (w,w), rotor_dim=(ww,ww)  }
-        [ p, w, ww, hh ] ->
-          osc $ c0 { period = p, dim = (w,w), rotor_dim=(ww,hh)  }
+        [ p, w, ww, r ] ->
+          osc $ c0 { period = p, dim = (w,w), rotor_dim=(ww,ww)
+	           , rotor_size = Just r
+		   }
 	  
 {-        
         [ p, w       ] -> osc $ Config p (w,w) Nothing Nothing  Nothing
@@ -140,7 +142,7 @@ parallel conf methods = do
                                 , Option "phase" 0
                                 , Option "forcephase" 1
                                 ]
-                ) $ con $ conf { match_type = m }
+                ) $ con $ conf { spec = m }
   (_, out) <- waitAnyCancel as
   return out
   
@@ -150,7 +152,7 @@ osc
   -> IO ()
 osc conf = do
   (mt, (status, Just gs))
-    <- parallel conf match_types
+    <- parallel conf spec_types
   case status of
     Satisfied -> do
       let m = M.fromListWith (<>) $ do
@@ -161,7 +163,7 @@ osc conf = do
           stator = M.keysSet $ M.filter (== S.singleton True) m
           rotor  = M.keysSet $ M.filter ((>1) . length) m
       let header =
-	    printf "period: %d, box: %s, total: %d, rotor: %d, stator: %d, match_type: %s\n"
+	    printf "period: %d, box: %s, total: %d, rotor: %d, stator: %d, spec_type: %s\n"
             (length gs-1) (show $ dim conf)
             total (length rotor) (length stator) (show mt)
 	  info = unlines $ header : do
@@ -195,37 +197,125 @@ con c = do
   hs <- replicateM (period c + 1) $ R.relation rbnd    
   let fixed = not . A.inRange rbnd
   let gs = map (with g0) hs
-        
+
   assert $ all bordered gs
   
   assert $ head gs === last gs
 
+
+  case spec c of
+    BB -> conform @(B.Binary 2) gs
+    UU -> conform @(U.Unary 4) gs
+    NN -> conform @N gs
+    OO -> conform @O gs
+  {-
   forM_ (A.range bnd) $ \ pos ->
     if fixed pos && all fixed (neighbours_pos (head gs) pos)
     then matches (match_type c) (head gs, head gs) pos
     else forM_ (zip gs $ tail gs) $ \ (g,h) -> 
        matches (match_type c) (g,h) pos
-    
+  -}
+
   assert $ case total_size c of
     Nothing -> true
     Just s -> C.atmost s $ R.elems $ head gs
+
+  case rotor_size c of
+    Nothing -> return ()
+    Just s -> do
+      rot <- R.relation rbnd
+      assert $ C.atmost s $ R.elems rot
+      assert $ flip all (A.range rbnd) $ \ pos ->
+        let xs = map (R.! pos) hs
+	    changes = not (and xs) && or xs
+	in  changes ==> rot R.! pos
 
   assert $ no_shorter_period_C (period c)
     (filter (not . fixed) $ A.range bnd) $ init gs
 
   return gs
 
-data Match_Type = Onehot | Flat | Atmo | Step Step
+
+conform 
+  :: forall t s m
+  . (C.FromBit t, EqC t, Num t, MonadSAT s m)
+  => [R.Relation Int Int] -> m ()
+conform gs = do
+  let gees = map (gee @t) gs
+  forM_ (zip gees $ tail gees) $ \ (g,h) ->
+    forM_ (R.indices $ base g) $ \ pos@(i,j) -> do
+      let x = base g R.! pos; x' = base h R.! pos
+          c =
+	    if even i == even j
+	    then (horz g A.!(i-1,j-1) + horz g A.!(i+1,j  ))
+               + (vert g A.!(i  ,j-1) + vert g A.!(i-1,j+1))
+            else (vert g A.!(i-1,j-1) + vert g A.!(i  ,j+1))
+               + (horz g A.!(i-1,j  ) + horz g A.!(i+1,j-1))
+      assert $ x' === (eqC 2 c && x || eqC 3 c)     
+
+
+data Gee t = Gee
+  { base :: R.Relation Int Int
+  , horz :: A.Array (Int,Int) t
+  , vert :: A.Array (Int,Int) t
+  }
+
+gee
+  :: forall t
+  . (C.FromBit t, Num t)
+  => R.Relation Int Int -> Gee t
+gee g =
+  let n = afrom (R.bounds g) $ \ i -> C.fromBit (g R.! i)
+  in  Gee g (hor n) (ver n)
+
+-- hor g = h <=> h[x,y] = g[x,y]+g[x,y+1]
+-- used for x == y (mod 2) only
+hor g =
+  let ((u,l),(d,r)) = A.bounds g
+      bnd = ((u-1,l-1),(d+1,r+1)) 
+  in  afrom bnd $ \ p@(x, y) ->
+        let q = (x,y+1)	in
+	case (A.inRange(A.bounds g)p,A.inRange(A.bounds g) q) of
+	  (False,False) -> 0
+	  (False,True) -> g A.! q
+	  (True,False) -> g A.! p
+	  (True,True)  -> g A.! p + g A.! q
+
+ver g =
+  let ((u,l),(d,r)) = A.bounds g
+      bnd = ((u-1,l-1),(d+1,r+1)) 
+  in  afrom bnd $ \ p@(x, y) ->
+        let q = (x+1,y)	in
+	case (A.inRange(A.bounds g)p,A.inRange(A.bounds g) q) of
+	  (False,False) -> 0
+	  (False,True) -> g A.! q
+	  (True,False) -> g A.! p
+	  (True,True)  -> g A.! p + g A.! q
+
+
+afrom bnd f = A.array bnd $ map (\i -> (i, f i)) $ A.range bnd
+
+data Match_Type = Onehot Hot | Flat | Atmo | Step Step
   deriving (Read, Show)
 
-match_types = [ Onehot, Flat, Atmo ]  <> fmap Step step_types
+match_types = fmap Onehot hot_types
+   <> [ Flat, Atmo ]
+   <> fmap Step step_types
 
-matches Onehot (g,h) pos = do
+data Hot = Plain | Split 
+  deriving (Read, Show, Bounded, Enum)
+
+hot_types = [ minBound .. maxBound @Hot ]
+
+
+matches (Onehot var) (g,h) pos = do
       let x = g R.! pos
           xs = neighbours g pos
 	  d = length xs
 	  x' = h R.! pos
-      c <- count4' xs ; let { cs = contents c }
+      c <-
+        (case var of { Plain -> count4; Split -> count4' }) xs
+      let { cs = contents c }
       assert $ or [ not x',    not $ cs !! 0 ]
       assert $ or [ not x',    not $ cs !! 1 ]
       assert $ or [ not x', x, not $ cs !! 2 ]
