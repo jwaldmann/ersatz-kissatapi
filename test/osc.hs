@@ -75,6 +75,7 @@ data Config =
          , rotor_size :: Maybe Int
          , total_size :: Maybe Int
 	 , spec :: Spec
+	 , match_type :: Match_Type
          } deriving (Show, Read)
 
 c0 = Config { period  = 3
@@ -83,6 +84,7 @@ c0 = Config { period  = 3
 	    , rotor_size = Nothing
 	    , total_size = Just 20
 	    , spec = BB
+	    , match_type = Flat
 	    }
 
 main :: IO ()
@@ -135,24 +137,36 @@ instance (A.Ix a, A.Ix b) => Orderable (R.Relation a b) where
     && R.elems r <? R.elems s
 
 
-parallel conf methods = do
-  as <- forM methods $ \ m -> async $ do
-      fmap (m,) $ solveWith (kissatapi_with [ Configuration "sat"
+parallel_specs conf specs = do
+  as <- forM specs $ \ sp -> async $ do
+      fmap (sp,) $ solveWith (kissatapi_with [ Configuration "sat"
                                 -- , Option "quiet" 1
                                 , Option "phase" 0
                                 , Option "forcephase" 1
                                 ]
-                ) $ con $ conf { spec = m }
+                ) $ con $ conf { spec = sp }
   (_, out) <- waitAnyCancel as
   return out
-  
+
+parallel_match_types conf mts = do
+  as <- forM mts $ \ mt -> async $ do
+      fmap (mt,) $ solveWith (kissatapi_with [ Configuration "sat"
+                                -- , Option "quiet" 1
+                                , Option "phase" 0
+                                , Option "forcephase" 1
+                                ]
+                ) $ con $ conf { match_type = mt }
+  (_, out) <- waitAnyCancel as
+  return out
+
 
 osc
   :: Config
   -> IO ()
 osc conf = do
   (mt, (status, Just gs))
-    <- parallel conf spec_types
+    <- -- parallel_specs conf spec_types
+    parallel_match_types conf match_types
   case status of
     Satisfied -> do
       let m = M.fromListWith (<>) $ do
@@ -163,7 +177,7 @@ osc conf = do
           stator = M.keysSet $ M.filter (== S.singleton True) m
           rotor  = M.keysSet $ M.filter ((>1) . length) m
       let header =
-	    printf "period: %d, box: %s, total: %d, rotor: %d, stator: %d, spec_type: %s\n"
+	    printf "period: %d, box: %s, total: %d, rotor: %d, stator: %d, type: %s\n"
             (length gs-1) (show $ dim conf)
             total (length rotor) (length stator) (show mt)
 	  info = unlines $ header : do
@@ -202,19 +216,20 @@ con c = do
   
   assert $ head gs === last gs
 
-
-  case spec c of
-    BB -> conform @(B.Binary 2) gs
-    UU -> conform @(U.Unary 4) gs
-    NN -> conform @N gs
-    OO -> conform @O gs
   {-
+  case spec c of
+    BI -> conform @Bits fixed gs
+    BB -> conform @(B.Binary 2) fixed gs
+    UU -> conform @(U.Unary 4) fixed gs
+    NN -> conform @N fixed gs
+    OO -> conform @O fixed gs
+  -}  
+
   forM_ (A.range bnd) $ \ pos ->
-    if fixed pos && all fixed (neighbours_pos (head gs) pos)
+    if fixed pos && all fixed (neighbours_pos bnd pos)
     then matches (match_type c) (head gs, head gs) pos
     else forM_ (zip gs $ tail gs) $ \ (g,h) -> 
        matches (match_type c) (g,h) pos
-  -}
 
   assert $ case total_size c of
     Nothing -> true
@@ -224,7 +239,8 @@ con c = do
     Nothing -> return ()
     Just s -> do
       rot <- R.relation rbnd
-      assert $ C.atmost s $ R.elems rot
+      forM (rows rot <> cols rot) $ assert_block s
+      
       assert $ flip all (A.range rbnd) $ \ pos ->
         let xs = map (R.! pos) hs
 	    changes = not (and xs) && or xs
@@ -235,15 +251,46 @@ con c = do
 
   return gs
 
+assert_block s xs = do
+  up <- monotone (length xs)
+  down <- reverse <$> monotone (length xs)
+  let bimod = zipWith (&&) up down
+  assert $ and $ zipWith (==>) xs bimod
+  assert $ not $ or $ zipWith (&&) bimod $ drop s bimod
+
+monotone k = do
+  xs <- replicateM k exists
+  assert $ and $ zipWith (==>) xs $ tail xs
+  return xs
+
+rows a = do
+  let ((u,l),(d,r)) = R.bounds a
+  x <- [u..d]
+  return $ do
+    y <- [l..r]
+    return $ a R.! (x,y)
+
+cols a = do
+  let ((u,l),(d,r)) = R.bounds a
+  y <- [l..r]
+  return $ do
+    x <- [u..d]
+    return $ a R.! (x,y)
+
+
 
 conform 
   :: forall t s m
   . (C.FromBit t, EqC t, Num t, MonadSAT s m)
-  => [R.Relation Int Int] -> m ()
-conform gs = do
-  let gees = map (gee @t) gs
-  forM_ (zip gees $ tail gees) $ \ (g,h) ->
-    forM_ (R.indices $ base g) $ \ pos@(i,j) -> do
+  => ((Int,Int) -> Bool)
+  -> [R.Relation Int Int] -> m ()
+conform fixed gs = do
+  let bnd = R.bounds $ head gs
+      gees = map (gee @t) gs
+  forM_ (A.range bnd) $ \ pos@(i,j) -> do
+    let safe = all fixed $ pos : neighbours_pos bnd pos
+        f = if safe then take 1 else id
+    forM_ (f $ zip gees $ tail gees) $ \ (g,h) -> do
       let x = base g R.! pos; x' = base h R.! pos
           c =
 	    if even i == even j
@@ -616,13 +663,13 @@ next_simple step p g =
     return (i, if p i then step x $ neighbours g i else x)
 
 neighbours g pos =
-  map (g R.!) $ neighbours_pos g pos
+  map (g R.!) $ neighbours_pos (R.bounds g) pos
 
-neighbours_pos g (i,j) = do
+neighbours_pos bnd (i,j) = do
             i' <- [ i-1, i, i+1 ]
             j' <- [ j-1, j, j+1 ]
             guard $ i /= i' || j /= j'
-            guard $  A.inRange (R.bounds g) (i',j') 
+            guard $  A.inRange bnd (i',j') 
             return (i', j')
 
 data Step = Naive | Unary | Count | Spec Spec
@@ -639,11 +686,12 @@ step_unary x xs =
 -- | CNF 11953 vars 54222 clauses  1min52
 step_count x xs = x && C.exactly 2 xs || C.exactly 3 xs
 
-data Spec = BB | UU | OO | NN
+data Spec = BI | BB | UU | OO | NN
   deriving (Read, Show, Enum, Bounded)
 
 spec_types = [minBound .. maxBound @Spec]
 
+step_spec BB = step_spec_imp @(Bits)
 step_spec BB = step_spec_imp @(B.Binary 2)
 step_spec UU = step_spec_imp @(U.Unary 4)
 step_spec NN = step_spec_imp @(N)
@@ -665,6 +713,8 @@ step_spec_imp x xs =
 instance KnownNat w => EqC (B.Binary w)
 instance KnownNat w => EqC (U.Unary w)
 
+instance C.FromBit Bits where  fromBit x = Bits [x]
+instance EqC Bits
 
 -- | census xs !! k <=> sumBits xs == k
 census [] = [true]
