@@ -90,6 +90,7 @@ c0 = Config { period  = 3
 main :: IO ()
 main = void $ do
     argv <- getArgs
+    hSetBuffering stdout LineBuffering
     case  map read argv of
         []             -> osc $ c0
         [ p, w ] ->
@@ -246,7 +247,7 @@ con c = do
 	    changes = not (and xs) && or xs
 	in  changes ==> rot R.! pos
 
-  assert $ no_shorter_period_C (period c)
+  assert $ no_shorter_period_A (period c)
     (filter (not . fixed) $ A.range bnd) $ init gs
 
   return gs
