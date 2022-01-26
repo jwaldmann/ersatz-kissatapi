@@ -292,11 +292,12 @@ con c = do
 the (Just s) = s
 
 
-data Sym = H | V | D deriving (Eq, Ord, Show, Read, Enum,Bounded)
+data Sym = C | H | V | D deriving (Eq, Ord, Show, Read, Enum,Bounded)
 
 sym s g =
   let bnd@((u,l),(d,r)) = R.bounds g
   in  case s of
+         C -> flip R.buildFrom bnd $ \ i j -> g R.! (u+d-i, l+r-j)
          H -> flip R.buildFrom bnd $ \ i j -> g R.! (i, l+r-j)
          V -> flip R.buildFrom bnd $ \ i j -> g R.! (u+d-i, j)
          D -> flip R.buildFrom bnd $ \ i j -> g R.! (j,i)
