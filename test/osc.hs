@@ -70,44 +70,64 @@ import Control.Concurrent.Async
 
 data Config =
   Config { period :: Int
-         , dim :: (Int,Int)
-         , rotor_dim :: (Int,Int)
-         , rotor_size :: Maybe Int
+         , width :: Int
+         , height :: Maybe Int
          , total_size :: Maybe Int
-	 , spec :: Spec
-	 , match_type :: Match_Type
+         , rotor_width :: Maybe Int
+         , rotor_height :: Maybe Int
+         , rotor_size :: Maybe Int
+         , symmetries :: [Sym]
+         , spec :: Maybe Spec
+         , match_type :: Match_Type
          } deriving (Show, Read)
 
+dim c = (width c, maybe  (width c) id $ height c)
+rotor_dim c = case rotor_width c of
+  Nothing -> Nothing
+  Just w -> Just (w, maybe w id $ rotor_height c)
+
 c0 = Config { period  = 3
-            , dim = (8,8)
-	    , rotor_dim = (4,4)
-	    , rotor_size = Nothing
-	    , total_size = Just 20
-	    , spec = BB
-	    , match_type = Flat
-	    }
+            , width = 8
+            , height = Nothing
+            , total_size = Just 20
+            , rotor_width = Nothing
+            , rotor_height = Nothing
+            , rotor_size = Nothing
+            , symmetries  = []
+            , spec = Just BB
+            , match_type = Flat
+            }
+
+pconfig :: Parser Config
+pconfig = Config
+  <$> option auto (long "period" <> short 'p' )
+  <*> option auto (long "width"  <> short 'w' )
+  <*> option (Just <$> auto)
+      (long "height"  <> short 'h' <> value Nothing )
+  <*> option (Just <$> auto)
+      (long "size"  <> short 's' <> value Nothing )
+  <*> option (Just <$> auto)
+      (long "rotor-width"  <> short 'W' <> value Nothing )
+  <*> option (Just <$> auto)
+      (long "rotor-height"  <> short 'H' <> value Nothing )
+  <*> option (Just <$> auto)
+      (long "rotor-size"  <> short 'S' <> value Nothing )
+  <*> option ( fmap (map (read . return)) str)
+      (long "symmetries" <> short 'y' <> value [])
+  <*> option (Just <$> auto)
+      (long "spec"  <> short 'e' <> value Nothing)
+  <*> pure Flat
+  
+opts = info (pconfig <**> helper)
+      ( fullDesc  <> progDesc "find CGoL oscillator"   )
+       
 
 main :: IO ()
-main = void $ do
-    argv <- getArgs
-    hSetBuffering stdout LineBuffering
-    case  map read argv of
-        []             -> osc $ c0
-        [ p, w ] ->
-          osc $ c0 { period = p, dim = (w,w), rotor_dim=(w,w) }
-        [ p, w, ww ] ->
-          osc $ c0 { period = p, dim = (w,w), rotor_dim=(ww,ww)  }
-        [ p, w, ww, r ] ->
-          osc $ c0 { period = p, dim = (w,w), rotor_dim=(ww,ww)
-	           , rotor_size = Just r
-		   }
-	  
-{-        
-        [ p, w       ] -> osc $ Config p (w,w) Nothing Nothing  Nothing
-        [ p, w, h    ] -> osc $ Config p (w,h) Nothing Nothing  Nothing
-        [ p, w, h, r ] -> osc $ Config p (w,h) Nothing (Just r) Nothing
-        [ p, w, h, r,s ] -> osc $ Config p (w,h) Nothing (Just r) (Just s)
--}
+main = do
+  hSetBuffering stdout LineBuffering
+  hSetBuffering stderr LineBuffering
+  osc =<< execParser opts  
+
 
 test = osc $ c0 
 
@@ -145,7 +165,7 @@ parallel_specs conf specs = do
                                 , Option "phase" 0
                                 , Option "forcephase" 1
                                 ]
-                ) $ con $ conf { spec = sp }
+                ) $ con $ conf { spec = Just sp }
   (_, out) <- waitAnyCancel as
   return out
 
@@ -166,8 +186,8 @@ osc
   -> IO ()
 osc conf = do
   (mt, (status, Just gs))
-    <- -- parallel_specs conf spec_types
-    parallel_match_types conf match_types
+    <- parallel_specs conf spec_types
+      -- parallel_match_types conf match_types
   case status of
     Satisfied -> do
       let m = M.fromListWith (<>) $ do
@@ -178,15 +198,16 @@ osc conf = do
           stator = M.keysSet $ M.filter (== S.singleton True) m
           rotor  = M.keysSet $ M.filter ((>1) . length) m
       let header =
-	    printf "period: %d, box: %s, total: %d, rotor: %d, stator: %d, type: %s\n"
+            printf "period: %d, box: %s, total: %d, rotor: %d, stator: %d, sym: %s, type: %s\n"
             (length gs-1) (show $ dim conf)
-            total (length rotor) (length stator) (show mt)
-	  info = unlines $ header : do
-	    (t,g) <- zip [ 0..  ] gs
-	    ( printf "time %s" (show t) : printA rotor g )
+            total (length rotor) (length stator)
+            (concat $ map show $ symmetries conf) (show mt)
+          info = unlines $ header : do
+            (t,g) <- zip [ 0..  ] gs
+            ( printf "time %s" (show t) : printA rotor g )
       let d = ("p" <> show (period conf))
              </> ("s" <> show total)
-	  fn = d </> (show $ hash $ map A.elems gs) <.> "text"
+          fn = d </> (show $ hash $ map A.elems gs) <.> "text"
       createDirectoryIfMissing True d 
       writeFile fn info
       putStrLn info
@@ -204,18 +225,32 @@ con c = do
   let (w,h) = dim c
       bnd = ((1,1), (w,h))
 
-  let (rw,rh) = rotor_dim c
-  g0 <- R.relation bnd
-  let (mw,mh) = (div (1+w) 2, div (1+h) 2)
-      (u,d) =  (mw - div rw 2, mh - div rh 2)
-      rbnd = ((u+1,d+1),(u+rw,d+rh))
-  hs <- replicateM (period c + 1) $ R.relation rbnd    
-  let fixed = not . A.inRange rbnd
-  let gs = map (with g0) hs
+  gs <- case rotor_dim c of
+    Nothing -> replicateM (period c + 1) $ R.relation bnd
+    Just (rw,rh) -> do
+      g0 <- R.relation bnd
+      let (mw,mh) = (div (1+w) 2, div (1+h) 2)
+          (u,d) =  (mw - div rw 2, mh - div rh 2)
+          rbnd = ((u+1,d+1),(u+rw,d+rh))
+      hs <- replicateM (period c + 1) $ R.relation rbnd    
+      let fixed = not . A.inRange rbnd
+      return $ map (with g0) hs
+
+  forM_ (symmetries c) $ \ s -> do
+    forM_ gs $ \ g -> do
+      assert $ g === sym s g
 
   assert $ all bordered gs
   
   assert $ head gs === last gs
+
+  forM_ (zip gs $ tail gs) $ \ (g,h) -> do
+    assert $ h === case the $ spec c of
+      BI -> next_field @Bits (const True) g 
+      BB -> next_field @(B.Binary 3) (const True) g 
+      UU -> next_field @(U.Unary 5) (const True) g
+      NN -> next_field @N (const True) g
+      OO -> next_field @O (const True) g
 
   {-
   case spec c of
@@ -226,11 +261,13 @@ con c = do
     OO -> conform @O fixed gs
   -}  
 
+  {-
   forM_ (A.range bnd) $ \ pos ->
     if fixed pos && all fixed (neighbours_pos bnd pos)
     then matches (match_type c) (head gs, head gs) pos
     else forM_ (zip gs $ tail gs) $ \ (g,h) -> 
        matches (match_type c) (g,h) pos
+  -}
 
   assert $ case total_size c of
     Nothing -> true
@@ -239,18 +276,30 @@ con c = do
   case rotor_size c of
     Nothing -> return ()
     Just s -> do
+      let rbnd = ((1,1), maybe (dim c) id $ rotor_dim c)
       rot <- R.relation rbnd
-      forM (rows rot <> cols rot) $ assert_block s
-      
+      assert $ C.atmost s $ R.elems rot
       assert $ flip all (A.range rbnd) $ \ pos ->
-        let xs = map (R.! pos) hs
-	    changes = not (and xs) && or xs
-	in  changes ==> rot R.! pos
+        let xs = map (R.! pos) gs
+            changes = not (and xs) && or xs
+        in  changes ==> rot R.! pos
 
   assert $ no_shorter_period_A (period c)
-    (filter (not . fixed) $ A.range bnd) $ init gs
+    (A.range bnd) $ init gs
 
   return gs
+
+the (Just s) = s
+
+
+data Sym = H | V | D deriving (Eq, Ord, Show, Read, Enum,Bounded)
+
+sym s g =
+  let bnd@((u,l),(d,r)) = R.bounds g
+  in  case s of
+         H -> flip R.buildFrom bnd $ \ i j -> g R.! (i, l+r-j)
+         V -> flip R.buildFrom bnd $ \ i j -> g R.! (u+d-i, j)
+         D -> flip R.buildFrom bnd $ \ i j -> g R.! (j,i)
 
 assert_block s xs = do
   up <- monotone (length xs)
@@ -294,8 +343,8 @@ conform fixed gs = do
     forM_ (f $ zip gees $ tail gees) $ \ (g,h) -> do
       let x = base g R.! pos; x' = base h R.! pos
           c =
-	    if even i == even j
-	    then (horz g A.!(i-1,j-1) + horz g A.!(i+1,j  ))
+            if even i == even j
+            then (horz g A.!(i-1,j-1) + horz g A.!(i+1,j  ))
                + (vert g A.!(i  ,j-1) + vert g A.!(i-1,j+1))
             else (vert g A.!(i-1,j-1) + vert g A.!(i  ,j+1))
                + (horz g A.!(i-1,j  ) + horz g A.!(i+1,j-1))
@@ -322,23 +371,23 @@ hor g =
   let ((u,l),(d,r)) = A.bounds g
       bnd = ((u-1,l-1),(d+1,r+1)) 
   in  afrom bnd $ \ p@(x, y) ->
-        let q = (x,y+1)	in
-	case (A.inRange(A.bounds g)p,A.inRange(A.bounds g) q) of
-	  (False,False) -> 0
-	  (False,True) -> g A.! q
-	  (True,False) -> g A.! p
-	  (True,True)  -> g A.! p + g A.! q
+        let q = (x,y+1) in
+        case (A.inRange(A.bounds g)p,A.inRange(A.bounds g) q) of
+          (False,False) -> 0
+          (False,True) -> g A.! q
+          (True,False) -> g A.! p
+          (True,True)  -> g A.! p + g A.! q
 
 ver g =
   let ((u,l),(d,r)) = A.bounds g
       bnd = ((u-1,l-1),(d+1,r+1)) 
   in  afrom bnd $ \ p@(x, y) ->
-        let q = (x+1,y)	in
-	case (A.inRange(A.bounds g)p,A.inRange(A.bounds g) q) of
-	  (False,False) -> 0
-	  (False,True) -> g A.! q
-	  (True,False) -> g A.! p
-	  (True,True)  -> g A.! p + g A.! q
+        let q = (x+1,y) in
+        case (A.inRange(A.bounds g)p,A.inRange(A.bounds g) q) of
+          (False,False) -> 0
+          (False,True) -> g A.! q
+          (True,False) -> g A.! p
+          (True,True)  -> g A.! p + g A.! q
 
 
 afrom bnd f = A.array bnd $ map (\i -> (i, f i)) $ A.range bnd
@@ -359,8 +408,8 @@ hot_types = [ minBound .. maxBound @Hot ]
 matches (Onehot var) (g,h) pos = do
       let x = g R.! pos
           xs = neighbours g pos
-	  d = length xs
-	  x' = h R.! pos
+          d = length xs
+          x' = h R.! pos
       c <-
         (case var of { Plain -> count4; Split -> count4' }) xs
       let { cs = contents c }
@@ -374,27 +423,27 @@ matches (Onehot var) (g,h) pos = do
 matches Flat (g,h) pos = do
       let x = g R.! pos
           xs = neighbours g pos
-	  d = length xs
-	  x' = h R.! pos
+          d = length xs
+          x' = h R.! pos
       forM_ (seqs 4 xs) $ \ ys ->
         assert $ or $ not x' : map not ys
       forM_ (seqs (d-1) xs) $ \ ys ->
         assert $ or $ not x' : ys
       forM_ (replicateM d [False,True]) $ \ bs -> do
         let form = zipWith ($) (map (DB.bool id not) bs) xs
-	case length $ filter id bs of
-	  2 -> do
-	    assert $ or $ not x' :     x : form
-	    assert $ or $     x' : not x : form
+        case length $ filter id bs of
+          2 -> do
+            assert $ or $ not x' :     x : form
+            assert $ or $     x' : not x : form
           3 -> do
-	    assert $ or $     x' :         form
-	  _ -> return ()  
+            assert $ or $     x' :         form
+          _ -> return ()  
   
 matches Atmo (g,h) pos = do
       let x = g R.! pos
           xs = neighbours g pos
-	  d = length xs
-	  x' = h R.! pos
+          d = length xs
+          x' = h R.! pos
       m1 <- atmost 1 xs
       assert $ or [ not x', not m1 ]
       let { l2 = not m1 } ; m2 <- atmost  2 xs
@@ -408,8 +457,8 @@ matches Atmo (g,h) pos = do
 matches (Step s) (g,h) pos = do
       let x = g R.! pos
           xs = neighbours g pos
-	  d = length xs
-	  x' = h R.! pos
+          d = length xs
+          x' = h R.! pos
       assert $ x' === -- step_spec
                       step_unary
                       x xs             
@@ -454,8 +503,8 @@ plus a b = do
       let n = min 4 $ i + j
       forM_ [0..4] $ \ k -> do
         let t = contents c !! k
-	assert $ or $ [if k==n then t else not t, not x, not y ]
-  return c	
+        assert $ or $ [if k==n then t else not t, not x, not y ]
+  return c      
 
 seqs 0 _ = return []
 seqs k [] = []
@@ -544,8 +593,14 @@ next_field_too p g =
 
 mka bnd f = A.array bnd $ map (\i -> (i, f i)) $ A.range bnd
 
+next_field
+  :: forall t
+  . (C.FromBit t, EqC t, Num t)
+  => ((Int,Int) -> Bool)
+  -> R.Relation Int Int
+  -> R.Relation Int Int
 next_field p g = 
-  let fc :: [[ N ]]
+  let fc :: [[ t ]]
       fc = field_count $ to_field g
       ((u,l),_) = R.bounds g
   in  R.build (R.bounds g) $ do
