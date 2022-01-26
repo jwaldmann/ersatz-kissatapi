@@ -79,6 +79,7 @@ data Config =
          , symmetries :: [Sym]
          , spec :: Maybe Spec
          , match_type :: Match_Type
+	 , period_check :: Period_Check
          } deriving (Show, Read)
 
 dim c = (width c, maybe  (width c) id $ height c)
@@ -96,6 +97,7 @@ c0 = Config { period  = 3
             , symmetries  = []
             , spec = Just BB
             , match_type = Flat
+	    , period_check = Local
             }
 
 pconfig :: Parser Config
@@ -117,6 +119,10 @@ pconfig = Config
   <*> option (Just <$> auto)
       (long "spec"  <> short 'e' <> value Nothing)
   <*> pure Flat
+  <*> (   flag' (Global All) (long "global-all" <> short 'a')
+      <|> flag' (Global Div) (long "global-div" <> short 'd')
+      <|> flag  Local (Local) (long "local" <> short 'l')
+      )
   
 opts = info (pconfig <**> helper)
       ( fullDesc  <> progDesc "find CGoL oscillator"   )
@@ -284,7 +290,7 @@ con c = do
             changes = not (and xs) && or xs
         in  changes ==> rot R.! pos
 
-  assert $ no_shorter_period_A (period c)
+  assert $ no_shorter_period (period_check c) (period c)
     (A.range bnd) $ init gs
 
   return gs
@@ -544,6 +550,16 @@ isPrime n
 
 prime_divisors n
   = filter (\p -> 0 == mod n p && isPrime p) [ 2 .. n ]
+
+data Who = All | Div
+  deriving (Read, Show)
+data Period_Check = Global Who | Local
+  deriving (Read, Show)
+
+no_shorter_period pc = case pc of
+  Global All -> no_shorter_period_A
+  Global Div -> no_shorter_period_B
+  Local -> no_shorter_period_C
 
 -- | globally different (the picture as maximal period)
 no_shorter_period_A p ps gs =
