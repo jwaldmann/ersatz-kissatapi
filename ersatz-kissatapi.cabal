@@ -38,6 +38,12 @@ test-suite knight
   main-is: knight.hs
   build-depends: base, ersatz, ersatz-kissatapi
 
+test-suite twenty-four
+  hs-source-dirs: test
+  type: exitcode-stdio-1.0
+  main-is: twenty-four.hs
+  build-depends: base, array, random, mtl, ersatz, ersatz-kissatapi
+
 test-suite osc
   hs-source-dirs: test
   type: exitcode-stdio-1.0
