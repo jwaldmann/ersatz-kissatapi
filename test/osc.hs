@@ -87,8 +87,8 @@ rotor_dim c = case rotor_width c of
   Nothing -> Nothing
   Just w -> Just (w, maybe w id $ rotor_height c)
 
-c0 = Config { period  = 3
-            , width = 8
+c0 = Config { period = 2
+            , width = 5
             , height = Nothing
             , total_size = Just 20
             , rotor_width = Nothing
@@ -102,8 +102,8 @@ c0 = Config { period  = 3
 
 pconfig :: Parser Config
 pconfig = Config
-  <$> option auto (long "period" <> short 'p' )
-  <*> option auto (long "width"  <> short 'w' )
+  <$> option auto (long "period" <> short 'p' <> value (period c0) )
+  <*> option auto (long "width"  <> short 'w' <> value (width c0) )
   <*> option (Just <$> auto)
       (long "height"  <> short 'h' <> value Nothing )
   <*> option (Just <$> auto)
