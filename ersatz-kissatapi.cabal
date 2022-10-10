@@ -15,8 +15,10 @@ library
     Ersatz.Solver.Kissat.API
   default-extensions: ForeignFunctionInterface
   build-depends:   base >= 3 && < 5, async, ersatz, containers, transformers, lens, text
+  -- to find hsc-magic.h:
+  include-dirs: .
   -- to find kissat.h and libkissat.a, you could: 1. use next two lines
-  -- include-dirs: . /opt/kissat/latest/include
+  -- extra-include-dirs: /opt/kissat/latest/include
   -- extra-lib-dirs: /opt/kissat/latest/lib64
   -- or 2. provide these as command line arguments to cabal or stack.
   -- or 3. I think the correct method is to write this in some
