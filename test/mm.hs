@@ -16,6 +16,7 @@
 {-# language TypeApplications, OverloadedStrings, LambdaCase #-}
 
 import Prelude hiding ((&&),(||),not, or, and,all,any )
+import qualified Data.Bool
 import qualified Prelude
 import Ersatz
 import Ersatz.Solver.Kissat.API
@@ -26,22 +27,24 @@ import System.Environment
 
 main :: IO ()
 main = getArgs >>= \ case
-  [] -> down 2
-  [d] -> down (read d)
+  [] -> down 2 Nothing
+  [d] -> down (read d) Nothing
+  [d, m] -> down (read d) (Just $ read m)
 
-down :: Int -> IO ()
-down dim = do
-  let go muls = mainf dim muls >> go (muls - 1)
+down :: Int -> Maybe Int -> IO ()
+down dim mmuls = do
+  let go muls = mainf dim muls >>= \ case
+        Nothing -> printf "no solution for dim = %d, mmuls = %d\n" dim muls
+        Just _ -> go (muls - 1)
   hSetBuffering stdout LineBuffering
-  go $ dim^3
+  go $ maybe (dim^3 ) id mmuls
 
-mainf :: Int -> Int -> IO ()
+mainf :: Int -> Int -> IO (Maybe [[[[Bool]]]])
 mainf dim muls = do
   out <- solveWith (kissatapi_with [ Configuration "sat" ]) $ do
     let mat = replicateM dim $ replicateM dim $ exists @Bit
     abcs <- replicateM muls $ replicateM 3 mat
-    when False $ assert $ flip all (zip abcs $ tail abcs) $ \ (x, y) ->
-      head x <=? head y
+    when False $ assert $ and (zipWith (<?) abcs $ tail abcs) 
     let range = [0 .. dim-1]
     forM_ (replicateM 6 range) $ \ [ai,aj, bi,bj, ci,cj] -> do
           let want = ai == ci && aj == bi && bj == cj
@@ -56,9 +59,15 @@ mainf dim muls = do
       forM_ (zip [1 :: Int ..] abcs) $ \ (k, [a,b,c]) -> do
         printf "%d\n" k
         forM_ [0..dim-1] $ \ i -> do
-          printf "  %s  %s  %s\n" (srow i a) (srow i b) (srow i c) 
-      
-xors = foldr1 xor
+          printf "  %s  %s  %s\n" (srow i a) (srow i b) (srow i c)
+      return $ Just abcs
+    _ -> return Nothing
+
+-- arguments: dim = 2, muls = 7
+-- with  foldr1: 55 sec
+-- with bfoldr1: 52 sec
+-- most of that time is spent for proving unsolvability for muls=6
+xors = bfoldr1 xor
 
 bfoldr1 op xs =
   let go [x] = x
