@@ -6,4 +6,4 @@ packages:
 extra-deps:
 - git: https://github.com/jwaldmann/ersatz
   commit: 0d4a29d91d48d5a797ce556b9fb70f0af92fd422
-  
+- timeout-0.1.1
