@@ -20,12 +20,13 @@ import qualified Data.Bool
 import qualified Prelude
 import Ersatz hiding (Run)
 import Ersatz.Solver.Kissat.API
-import Control.Monad (replicateM, forM_, when)
+import Control.Monad (replicateM, forM_, when, join)
 import Text.Printf
 import System.IO
 import System.Environment
 import Data.Time.Clock
 import qualified Data.Map as M
+import qualified Data.Map.Merge.Lazy as M
 import Data.Text (Text)
 import Control.Monad.State (StateT)
 import System.Random
@@ -34,12 +35,16 @@ import Control.Concurrent.Async
 import System.IO
 
 main :: IO ()
-main = getArgs >>= \ case
-  [] -> down 2 Nothing
-  [d] -> down (read d) Nothing
-  [d, m] -> down (read d) (Just $ read m)
-  [ "walk", d, m ] ->
-    walk_from od0 ov0 $ \ ov -> mainfor ov (read d) ( read m)
+main = do
+  hSetBuffering stdout LineBuffering
+  hSetBuffering stderr LineBuffering
+  getArgs >>= \ case
+    [] -> down 2 Nothing
+    [d] -> down (read d) Nothing
+    [d, m] -> down (read d) (Just $ read m)
+    ["multi", p, d, m] -> multi_down (read p) (read d) (Just $ read m)
+    [ "walk", d, m ] ->
+      walk_from od0 ov1 $ \ ov -> mainfor ov (read d) ( read m)
 
 down :: Int -> Maybe Int -> IO ()
 down dim mmuls = do
@@ -49,33 +54,40 @@ down dim mmuls = do
   hSetBuffering stdout LineBuffering
   go $ maybe (dim^3 ) id mmuls
 
+multi_down :: Int -> Int -> Maybe Int -> IO ()
+multi_down p dim mmuls = do
+  let go ov muls = multi_mainf p ov dim muls >>= \ case
+        Nothing -> printf "no solution for dim = %d, mmuls = %d\n" dim muls
+        Just (o2, _) -> go o2 (muls - 1)
+  hSetBuffering stdout LineBuffering
+  go ov0 $ maybe (dim^3 ) id mmuls
 
 walk_from :: OD -> OV -> (OV -> IO r) -> IO ()
 walk_from od ov0 action = do
-  hSetBuffering stdout LineBuffering
-  hSetBuffering stderr LineBuffering
   let work c ov =  do
           o2 <- changes c od ov
           run o2 action
   let p = 16 
   Just r0 <- bestof Nothing p $ work 1 ov0
-  let go c r1 = do
-        mr <- bestof (Just $ val r1) p $ work c (ov r1)
+  let go r1 = do
+        mr <- bestofi (Just $ val r1) p $ \ i -> work i (ov r1)
         case mr of
-          Just (r2, _) | val r2 < val r1 -> do
+          Just (r2, _) -> do
             printf "best %s, this %s\n" (show r1) (show r2)
-            go 1 r2
+            go r2
           _ -> do
-            printf "keep best %s, increase c to %d\n" (show r1) (c+1)
-            go (c+1) r1
-  go (1::Int) $ fst r0
+            printf "keep best %s\n" (show r1) 
+            go r1
+  go $ fst r0
 
-bestof mto k action = do
-  as <- mapM async $  replicate k $ 
+bestof mto k action = bestofi mto k $ \ i -> action
+
+bestofi mto k action = do
+  as <- mapM async $ flip map (take k  [0..])  $ \ i -> 
     ( case mto of
       Nothing -> (Just <$>)
-      Just to -> timeout to
-      ) action
+      Just to -> timeout (1.5 * to)
+      ) $ action i
   snd <$> waitAnyCancel as
 
 changes 0 od ov = return ov
@@ -85,7 +97,7 @@ change od ov = do
   (k,bnd@(lo,hi)) <- pick od
   v' <- case M.lookup k ov of
     Nothing -> randomRIO (lo, hi)
-    Just v -> randomRIO (max lo $ v-1, min hi $ v+1)
+    Just v -> randomRIO  (max lo $ v-1, min hi $ v+1)
   return $ M.insert k v' ov
   
 pick m = do
@@ -96,26 +108,65 @@ pick m = do
 type OD = M.Map Text (Int,Int)
 
 od0 :: OD
-od0 = M.fromList
-  [ ("chrono",(0,1))
-  , ("phase", (0,1))
-  , ("quiet", (1,1))
+od0 = let bool = (0,1) in M.fromList
+  [ ("backbone", (0,2))
+  , ("bump", bool)
+  , ("bumpreasons", bool)
+  , ("chrono",bool)
+  , ("definitions", bool)
+  , ("eliminate", bool)
+  , ("equivalences", bool)
+  , ("extract", bool)
+  , ("forcephase", bool)
+  , ("forward", bool)
+  , ("ifthenelse", bool)
+  , ("minimize", bool)
+  , ("otfs", bool)
+  , ("phase", bool)
+  , ("phasesaving", bool)
+  , ("probe", bool)
+  , ("promote", bool)
+--  , ("quiet", (1,1))
+  , ("reduce", bool)
+  , ("reluctant", bool)
+  , ("rephase", bool)
+  , ("restart", bool)
   , ("seed", (0,0))
-  , ("shrink", (0,3))
+  , ("shrink", bool)
+  , ("simplify", bool)
   , ("stable", (0,2))
+  , ("substitute", bool)
+  , ("sweep", bool)
   , ("target", (0,2))
   , ("tier1", (1, 100))
-  , ("walkinitially", (0,1))
+  , ("tier2", (1, 1000))
+  , ("tumble", bool)
+  , ("vivify", bool)
+  , ("walkinitially", bool)
+  , ("warmup", bool)
   ]
 
 -- option values
 type OV = M.Map Text Int
 
+ov0 = ov2
+
 ov1 = M.fromList
-  [ ("chrono",1),("quiet",1),("shrink",3),("stable",2),("target",1),("tier1",12)
+  [ ("chrono",1)
+  ,("quiet",1)
+  ,("shrink",3),("stable",2),("target",1),("tier1",12)
   ]
 
-ov0 = M.fromList [("quiet", 1),("phase",0)]
+ov2 = M.fromList
+  [("backbone",1),("bump",1),("bumpreasons",0),("chrono",1),("definitions",1)
+  ,("eliminate",0),("equivalences",0),("extract",0),("forcephase",0)
+  ,("forward",1),("ifthenelse",0),("minimize",1),("otfs",1),("phase",1)
+  ,("phasesaving",1),("probe",0),("promote",1),("quiet",1),("reduce",1)
+  ,("reluctant",1),("rephase",1),("restart",1),("seed",0),("shrink",1)
+  ,("simplify",0),("stable",1),("substitute",0),("sweep",0),("target",0)
+  ,("tier1",31),("tier2",976),("tumble",0),("vivify",1),("walkinitially",0)
+  ,("warmup",1)
+  ]
 
 data Run = Run { ov :: OV
                , val :: NominalDiffTime
@@ -137,8 +188,24 @@ run ov action = do
   end <- getCurrentTime
   return (Run ov $ diffUTCTime end begin, r)
 
+multi_mainf :: Int -> OV -> Int -> Int -> IO (Maybe (OV,Maybe [[[[Bool]]]]))
+multi_mainf p ov d m = do
+  hPutStrLn stderr
+    $ printf "p = %d, ov = %s, d = %d, m = %d\n" p (show ov) d m
+  bestofi Nothing p $ \ i -> do
+    o2 <- changes i od0 ov
+    r <- mainfor o2 d m
+    hPutStrLn stdout $
+      printf "input config %s\nsuccess for %s\ndiff %s\n"
+        (show ov) (show o2) (show $ symdiff ov o2)
+    return (o2, r)
 
-
+symdiff :: (Ord k, Eq v) => M.Map k v -> M.Map k v -> M.Map k (Maybe v, Maybe v)
+symdiff = M.merge
+  (M.mapMissing $ \ k x -> (Just x, Nothing))
+  (M.mapMissing $ \ k x -> (Nothing, Just x))
+  (M.zipWithMaybeMatched $ \ k x y ->
+      if x == y then Nothing else Just (Just x, Just y))
 
 mainf :: Int -> Int -> IO (Maybe [[[[Bool]]]])
 mainf d m = mainfor ov0 d m
