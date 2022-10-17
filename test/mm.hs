@@ -33,18 +33,20 @@ import System.Random
 import Control.Timeout
 import Control.Concurrent.Async
 import System.IO
+import GHC.Conc
 
 main :: IO ()
 main = do
+  p <- getNumCapabilities
   hSetBuffering stdout LineBuffering
   hSetBuffering stderr LineBuffering
   getArgs >>= \ case
     [] -> down 2 Nothing
     [d] -> down (read d) Nothing
     [d, m] -> down (read d) (Just $ read m)
-    ["multi", p, d, m] -> multi_down (read p) (read d) (Just $ read m)
+    ["multi", d, m] -> multi_down p (read d) (Just $ read m)
     [ "walk", d, m ] ->
-      walk_from od0 ov1 $ \ ov -> mainfor ov (read d) ( read m)
+      walk_from p od0 ov1 $ \ ov -> mainfor ov (read d) ( read m)
 
 down :: Int -> Maybe Int -> IO ()
 down dim mmuls = do
@@ -62,12 +64,11 @@ multi_down p dim mmuls = do
   hSetBuffering stdout LineBuffering
   go ov0 $ maybe (dim^3 ) id mmuls
 
-walk_from :: OD -> OV -> (OV -> IO r) -> IO ()
-walk_from od ov0 action = do
+walk_from :: Int -> OD -> OV -> (OV -> IO r) -> IO ()
+walk_from p od ov0 action = do
   let work c ov =  do
           o2 <- changes c od ov
           run o2 action
-  let p = 16 
   Just r0 <- bestof Nothing p $ work 1 ov0
   let go r1 = do
         mr <- bestofi (Just $ val r1) p $ \ i -> work i (ov r1)
@@ -86,7 +87,7 @@ bestofi mto k action = do
   as <- mapM async $ flip map (take k  [0..])  $ \ i -> 
     ( case mto of
       Nothing -> (Just <$>)
-      Just to -> timeout (1.5 * to)
+      Just to -> timeout (2 * to)
       ) $ action i
   snd <$> waitAnyCancel as
 
