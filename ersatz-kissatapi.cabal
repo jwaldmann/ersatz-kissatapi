@@ -55,5 +55,5 @@ test-suite mm
   hs-source-dirs: test
   type: exitcode-stdio-1.0
   main-is: mm.hs
-  build-depends: base, ersatz, ersatz-kissatapi, time, containers, text, mtl,random, timeout, async
+  build-depends: base, ersatz, ersatz-kissatapi, time, containers, array, text, mtl,random, timeout, async
   ghc-options: -threaded -rtsopts

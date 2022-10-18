@@ -21,6 +21,7 @@ import qualified Prelude
 import Ersatz hiding (Run)
 import Ersatz.Solver.Kissat.API
 import Control.Monad (replicateM, forM_, when, join)
+import qualified Data.Array as A
 import Text.Printf
 import System.IO
 import System.Environment
@@ -46,7 +47,7 @@ main = do
     [d, m] -> down (read d) (Just $ read m)
     ["multi", d, m] -> multi_down p (read d) (Just $ read m)
     [ "walk", d, m ] ->
-      walk_from p od0 ov1 $ \ ov -> mainfor ov (read d) ( read m)
+      walk_from p od0 ov0 $ \ ov -> mainfor ov (read d) ( read m)
 
 down :: Int -> Maybe Int -> IO ()
 down dim mmuls = do
@@ -71,7 +72,7 @@ walk_from p od ov0 action = do
           run o2 action
   Just r0 <- bestof Nothing p $ work 1 ov0
   let go r1 = do
-        mr <- bestofi (Just $ val r1) p $ \ i -> work i (ov r1)
+        mr <- bestofi (Just $ val r1) p $ \ i -> work (1+i) (ov r1)
         case mr of
           Just (r2, _) -> do
             printf "best %s, this %s\n" (show r1) (show r2)
@@ -87,7 +88,7 @@ bestofi mto k action = do
   as <- mapM async $ flip map (take k  [0..])  $ \ i -> 
     ( case mto of
       Nothing -> (Just <$>)
-      Just to -> timeout (2 * to)
+      Just to -> timeout (1 * to)
       ) $ action i
   snd <$> waitAnyCancel as
 
@@ -150,7 +151,9 @@ od0 = let bool = (0,1) in M.fromList
 -- option values
 type OV = M.Map Text Int
 
-ov0 = ov2
+ov0 = ovblank
+
+ovblank = M.fromList [("quiet",1)]
 
 ov1 = M.fromList
   [ ("chrono",1)
@@ -166,6 +169,17 @@ ov2 = M.fromList
   ,("reluctant",1),("rephase",1),("restart",1),("seed",0),("shrink",1)
   ,("simplify",0),("stable",1),("substitute",0),("sweep",0),("target",0)
   ,("tier1",31),("tier2",976),("tumble",0),("vivify",1),("walkinitially",0)
+  ,("warmup",1)
+  ]
+
+ov3 = M.fromList
+  [("backbone",1),("bump",1),("bumpreasons",1),("chrono",1),("definitions",0)
+  ,("eliminate",1),("equivalences",1),("extract",1),("forcephase",0)
+  ,("forward",1),("ifthenelse",1),("minimize",1),("otfs",1),("phase",0)
+  ,("phasesaving",1),("probe",1),("promote",0),("quiet",1),("reduce",1)
+  ,("reluctant",0),("rephase",1),("restart",1),("seed",0),("shrink",1)
+  ,("simplify",1),("stable",1),("substitute",1),("sweep",1),("target",2)
+  ,("tier1",12),("tier2",204),("tumble",0),("vivify",0),("walkinitially",0)
   ,("warmup",1)
   ]
 
@@ -189,7 +203,9 @@ run ov action = do
   end <- getCurrentTime
   return (Run ov $ diffUTCTime end begin, r)
 
-multi_mainf :: Int -> OV -> Int -> Int -> IO (Maybe (OV,Maybe [[[[Bool]]]]))
+type ABC e = [ A.Array (Int,Int) e ]
+
+multi_mainf :: Int -> OV -> Int -> Int -> IO (Maybe (OV,Maybe [ ABC Bool ]))
 multi_mainf p ov d m = do
   hPutStrLn stderr
     $ printf "p = %d, ov = %s, d = %d, m = %d\n" p (show ov) d m
@@ -208,20 +224,24 @@ symdiff = M.merge
   (M.zipWithMaybeMatched $ \ k x y ->
       if x == y then Nothing else Just (Just x, Just y))
 
-mainf :: Int -> Int -> IO (Maybe [[[[Bool]]]])
+mainf :: Int -> Int -> IO (Maybe [ABC Bool])
 mainf d m = mainfor ov0 d m
 
 mainfor ov dim muls = do
   out <- solveWithKissat ov $ do
-    let mat = replicateM dim $ replicateM dim $ exists @Bit
+    let bnd = ((0,0),(dim-1,dim-1))
+        mat = fmap (A.listArray bnd)
+            $ replicateM (dim ^ 2) $ exists @Bit
     abcs <- replicateM muls $ replicateM 3 mat
     when False $ assert $ and (zipWith (<?) abcs $ tail abcs) 
-    let range = [0 .. dim-1]
-    forM_ (replicateM 6 range) $ \ [ai,aj, bi,bj, ci,cj] -> do
+    -- forM_ (replicateM 6 range) $ \ [ai,aj, bi,bj, ci,cj] -> do
+    forM_ (A.range bnd) $ \ (ai,aj) ->
+      forM_ (A.range bnd) $ \ (bi,bj) ->
+        forM_ (A.range bnd) $ \ (ci,cj) -> do
           let want = ai == ci && aj == bi && bj == cj
               have = xors $ do
                 [a,b,c] <- abcs
-                return $ a!!ai!!aj && b!!bi!!bj && c!!ci!!cj
+                return $ a A.! (ai,aj) && b A.! (bi,bj) && c A.! (ci,cj)
           assert $ encode want === have
     return abcs
   case out of
@@ -234,6 +254,12 @@ mainfor ov dim muls = do
       return $ Just abcs
     _ -> return Nothing
 
+instance (A.Ix i, Equatable e) => Equatable (A.Array i e) where
+  a === b | A.bounds a == A.bounds b = A.elems a === A.elems b
+
+instance (A.Ix i, Orderable e) => Orderable (A.Array i e) where
+  a <? b | A.bounds a == A.bounds b = A.elems a <? A.elems b
+
 -- arguments: dim = 2, muls = 7
 -- with  foldr1: 55 sec
 -- with bfoldr1: 52 sec
@@ -245,4 +271,8 @@ bfoldr1 op xs =
       go (x:y:zs) = go (zs <> [op x y])
   in  go xs
 
-srow i m = show $ map fromEnum $ m !! i
+srow i m =
+  let ((_,lo),(_,hi)) = A.bounds m
+  in  show $ map fromEnum $ do
+        j <- A.range (lo,hi)
+        return $ m A.! (i,j)
