@@ -28,6 +28,7 @@ import System.Environment
 import Data.Time.Clock
 import qualified Data.Map as M
 import qualified Data.Map.Merge.Lazy as M
+import qualified Data.Set as S
 import Data.Text (Text)
 import Control.Monad.State (StateT)
 import System.Random
@@ -35,6 +36,7 @@ import Control.Timeout
 import Control.Concurrent.Async
 import System.IO
 import GHC.Conc
+import Control.Concurrent.STM
 
 main :: IO ()
 main = do
@@ -45,8 +47,11 @@ main = do
     [] -> down 2 Nothing
     [d] -> down (read d) Nothing
     [d, m] -> down (read d) (Just $ read m)
-    ["multi", d, m] -> multi_down p (read d) (Just $ read m)
+    ["multi", d, m] ->
+      -- solve for parameters, and reduce number number of multiplications
+       multi_down p (read d) (Just $ read m)
     [ "walk", d, m ] ->
+      -- find best config for given fixed parameters (taboo search)
       walk_from p od0 ov0 $ \ ov -> mainfor ov (read d) ( read m)
 
 down :: Int -> Maybe Int -> IO ()
@@ -67,12 +72,26 @@ multi_down p dim mmuls = do
 
 walk_from :: Int -> OD -> OV -> (OV -> IO r) -> IO ()
 walk_from p od ov0 action = do
+  seen <- atomically $ newTVar mempty
   let work c ov =  do
           o2 <- changes c od ov
-          run o2 action
+          fresh <- atomically $ do
+            s <- readTVar seen
+            if S.member o2 s
+              then return False
+              else do
+                writeTVar seen $ S.insert o2 s
+                return True
+          if fresh      
+            then do
+              -- hPutStrLn stderr $ printf "run for %s\n" (show o2)
+              run o2 action
+            else do
+              -- hPutStrLn stderr "not fresh"
+              work c ov
   Just r0 <- bestof Nothing p $ work 1 ov0
   let go r1 = do
-        mr <- bestofi (Just $ val r1) p $ \ i -> work (1+i) (ov r1)
+        mr <- bestofi (Just $ val r1) p $ \ i -> work (1 + mod i 2) (ov r1)
         case mr of
           Just (r2, _) -> do
             printf "best %s, this %s\n" (show r1) (show r2)
@@ -111,10 +130,12 @@ type OD = M.Map Text (Int,Int)
 
 od0 :: OD
 od0 = let bool = (0,1) in M.fromList
-  [ ("backbone", (0,2))
+  [ ("ands", bool)
+  , ("backbone", (0,2))
   , ("bump", bool)
   , ("bumpreasons", bool)
   , ("chrono",bool)
+  , ("compact", bool)
   , ("definitions", bool)
   , ("eliminate", bool)
   , ("equivalences", bool)
@@ -123,18 +144,15 @@ od0 = let bool = (0,1) in M.fromList
   , ("forward", bool)
   , ("ifthenelse", bool)
   , ("minimize", bool)
+  , ("minimizeticks", bool)
   , ("otfs", bool)
   , ("phase", bool)
   , ("phasesaving", bool)
   , ("probe", bool)
   , ("promote", bool)
 --  , ("quiet", (1,1))
-  , ("reduce", bool)
-  , ("reluctant", bool)
-  , ("rephase", bool)
-  , ("restart", bool)
   , ("seed", (0,0))
-  , ("shrink", bool)
+  , ("shrink", (0,3))
   , ("simplify", bool)
   , ("stable", (0,2))
   , ("substitute", bool)
