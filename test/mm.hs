@@ -73,25 +73,25 @@ multi_down p dim mmuls = do
 walk_from :: Int -> OD -> OV -> (OV -> IO r) -> IO ()
 walk_from p od ov0 action = do
   seen <- atomically $ newTVar mempty
-  let work c ov =  do
-          o2 <- changes c od ov
+  let work ov =  do
+          o2 <- change od ov
           fresh <- atomically $ do
             s <- readTVar seen
             if S.member o2 s
               then return False
               else do
-                writeTVar seen $ S.insert o2 s
+                writeTVar seen $! S.insert o2 s
                 return True
           if fresh      
             then do
               -- hPutStrLn stderr $ printf "run for %s\n" (show o2)
               run o2 action
             else do
-              -- hPutStrLn stderr "not fresh"
-              work c ov
-  Just r0 <- bestof Nothing p $ work 1 ov0
+              -- hPutStrLn stderr $ printf "not fresh %s\n" (show o2)
+              work o2
+  Just r0 <- bestof Nothing p $ work ov0
   let go r1 = do
-        mr <- bestofi (Just $ val r1) p $ \ i -> work (1 + mod i 2) (ov r1)
+        mr <- bestofi (Just $ val r1) p $ \ i -> work (ov r1)
         case mr of
           Just (r2, _) -> do
             printf "best %s, this %s\n" (show r1) (show r2)
@@ -107,7 +107,7 @@ bestofi mto k action = do
   as <- mapM async $ flip map (take k  [0..])  $ \ i -> 
     ( case mto of
       Nothing -> (Just <$>)
-      Just to -> timeout (1 * to)
+      Just to -> timeout (2 * to)
       ) $ action i
   snd <$> waitAnyCancel as
 
@@ -169,7 +169,7 @@ od0 = let bool = (0,1) in M.fromList
 -- option values
 type OV = M.Map Text Int
 
-ov0 = ovblank
+ov0 = ov8
 
 ovblank = M.fromList [("quiet",1)]
 
@@ -200,6 +200,16 @@ ov3 = M.fromList
   ,("tier1",12),("tier2",204),("tumble",0),("vivify",0),("walkinitially",0)
   ,("warmup",1)
   ]
+
+ov4 = M.fromList [("ands",0),("backbone",0),("bumpreasons",1),("chrono",1),("eliminate",1),("forcephase",0),("forward",1),("ifthenelse",1),("minimize",1),("minimizeticks",1),("otfs",1),("phase",0),("phasesaving",1),("probe",1),("promote",0),("quiet",1),("seed",0),("shrink",3),("stable",2),("substitute",0),("sweep",0),("target",2),("tier1",90),("tier2",1),("tumble",1),("vivify",0),("walkinitially",0),("warmup",1)]
+
+ov5 = M.fromList [("ands",0),("backbone",1),("bump",1),("bumpreasons",1),("chrono",1),("compact",0),("definitions",1),("eliminate",1),("extract",1),("forcephase",0),("forward",0),("ifthenelse",0),("minimize",1),("minimizeticks",1),("otfs",1),("phase",1),("phasesaving",0),("promote",1),("quiet",1),("seed",0),("shrink",3),("simplify",0),("stable",2),("substitute",1),("sweep",1),("target",2),("tier1",18),("tier2",760),("tumble",1),("vivify",1),("warmup",0)]
+
+ov6 = M.fromList [("ands",1),("backbone",1),("bump",1),("bumpreasons",0),("chrono",1),("compact",0),("definitions",1),("eliminate",1),("extract",1),("forcephase",0),("forward",1),("ifthenelse",0),("minimize",1),("minimizeticks",1),("otfs",1),("phase",1),("phasesaving",0),("probe",0),("promote",0),("quiet",1),("seed",0),("shrink",3),("simplify",0),("stable",2),("substitute",0),("sweep",0),("target",1),("tier1",18),("tier2",760),("tumble",0),("vivify",1),("warmup",0)]
+
+ov7 = M.fromList [("ands",0),("backbone",1),("bump",1),("bumpreasons",0),("chrono",0),("compact",0),("definitions",1),("eliminate",1),("equivalences",1),("extract",1),("forcephase",0),("forward",0),("ifthenelse",0),("minimize",1),("minimizeticks",1),("otfs",0),("phase",0),("phasesaving",0),("probe",1),("promote",0),("quiet",1),("seed",0),("shrink",3),("simplify",1),("stable",2),("substitute",0),("sweep",0),("target",2),("tier1",18),("tier2",759),("tumble",0),("vivify",1),("warmup",0)]
+
+ov8 = M.fromList [("ands",1),("backbone",0),("bump",1),("bumpreasons",0),("chrono",0),("compact",0),("definitions",1),("eliminate",1),("equivalences",1),("extract",1),("forcephase",0),("forward",0),("ifthenelse",0),("minimize",1),("minimizeticks",1),("otfs",0),("phase",0),("phasesaving",0),("probe",1),("promote",0),("quiet",1),("seed",0),("shrink",3),("simplify",1),("stable",2),("substitute",0),("sweep",0),("target",1),("tier1",18),("tier2",762),("tumble",0),("vivify",1),("walkinitially",0),("warmup",0)]
 
 data Run = Run { ov :: OV
                , val :: NominalDiffTime
