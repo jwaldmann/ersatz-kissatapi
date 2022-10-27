@@ -169,7 +169,7 @@ od0 = let bool = (0,1) in M.fromList
 -- option values
 type OV = M.Map Text Int
 
-ov0 = ov8
+ov0 = ov10
 
 ovblank = M.fromList [("quiet",1)]
 
@@ -210,6 +210,10 @@ ov6 = M.fromList [("ands",1),("backbone",1),("bump",1),("bumpreasons",0),("chron
 ov7 = M.fromList [("ands",0),("backbone",1),("bump",1),("bumpreasons",0),("chrono",0),("compact",0),("definitions",1),("eliminate",1),("equivalences",1),("extract",1),("forcephase",0),("forward",0),("ifthenelse",0),("minimize",1),("minimizeticks",1),("otfs",0),("phase",0),("phasesaving",0),("probe",1),("promote",0),("quiet",1),("seed",0),("shrink",3),("simplify",1),("stable",2),("substitute",0),("sweep",0),("target",2),("tier1",18),("tier2",759),("tumble",0),("vivify",1),("warmup",0)]
 
 ov8 = M.fromList [("ands",1),("backbone",0),("bump",1),("bumpreasons",0),("chrono",0),("compact",0),("definitions",1),("eliminate",1),("equivalences",1),("extract",1),("forcephase",0),("forward",0),("ifthenelse",0),("minimize",1),("minimizeticks",1),("otfs",0),("phase",0),("phasesaving",0),("probe",1),("promote",0),("quiet",1),("seed",0),("shrink",3),("simplify",1),("stable",2),("substitute",0),("sweep",0),("target",1),("tier1",18),("tier2",762),("tumble",0),("vivify",1),("walkinitially",0),("warmup",0)]
+
+ov9 = M.fromList [("ands",0),("backbone",1),("bump",1),("bumpreasons",0),("chrono",0),("compact",0),("definitions",1),("eliminate",1),("equivalences",0),("extract",1),("forcephase",0),("forward",0),("ifthenelse",1),("minimize",1),("minimizeticks",1),("otfs",0),("phase",0),("phasesaving",0),("probe",1),("promote",0),("quiet",1),("seed",0),("shrink",3),("simplify",1),("stable",2),("substitute",0),("sweep",0),("target",1),("tier1",18),("tier2",759),("tumble",0),("vivify",1),("walkinitially",1),("warmup",0)]
+
+ov10 = M.fromList [("ands",0),("backbone",0),("bump",1),("bumpreasons",0),("chrono",0),("compact",0),("definitions",1),("eliminate",1),("equivalences",1),("extract",0),("forcephase",1),("forward",0),("ifthenelse",0),("minimize",1),("minimizeticks",0),("otfs",0),("phase",0),("phasesaving",0),("probe",1),("promote",0),("quiet",1),("seed",0),("shrink",2),("simplify",1),("stable",2),("substitute",0),("sweep",0),("target",2),("tier1",18),("tier2",760),("tumble",0),("vivify",1),("walkinitially",1),("warmup",0)]
 
 data Run = Run { ov :: OV
                , val :: NominalDiffTime
@@ -267,10 +271,12 @@ mainfor ov dim muls = do
       forM_ (A.range bnd) $ \ (bi,bj) ->
         forM_ (A.range bnd) $ \ (ci,cj) -> do
           let want = ai == ci && aj == bi && bj == cj
-              have = xors $ do
+              have = xors haves
+              haves = do
                 [a,b,c] <- abcs
                 return $ a A.! (ai,aj) && b A.! (bi,bj) && c A.! (ci,cj)
-          assert $ encode want === have
+          -- assert $ encode want === have
+          assert_xors $ not (encode want) : haves
     return abcs
   case out of
     (Satisfied, Just abcs) -> do
@@ -293,6 +299,20 @@ instance (A.Ix i, Orderable e) => Orderable (A.Array i e) where
 -- with bfoldr1: 52 sec
 -- most of that time is spent for proving unsolvability for muls=6
 xors = bfoldr1 xor
+
+assert_xors (a:b:c : ds) = do
+  x <- exists
+  assert $ or [ not a, not b, not c,     x ]
+  assert $ or [ not a, not b,     c, not x ]
+  assert $ or [ not a,     b, not c, not x ]
+  assert $ or [     a, not b, not c, not x ]
+  assert $ or [ not a,     b,     c,     x ]
+  assert $ or [     a, not b,     c,     x ]
+  assert $ or [     a,     b, not c,     x ]
+  assert $ or [     a,     b,     c, not x ]
+  assert_xors $ x : ds 
+  
+assert_xors xs = assert $ xors xs
 
 bfoldr1 op xs =
   let go [x] = x
