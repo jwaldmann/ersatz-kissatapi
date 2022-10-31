@@ -51,9 +51,16 @@ test-suite osc
   build-depends: base, ersatz, array, containers, ersatz-kissatapi, filepath, directory, hashable, optparse-applicative, async
   ghc-options: -threaded -rtsopts
 
+
 test-suite mm
   hs-source-dirs: test
   type: exitcode-stdio-1.0
   main-is: mm.hs
   build-depends: base, ersatz, ersatz-kissatapi, time, containers, array, text, mtl,random, timeout, async, stm
   ghc-options: -threaded -rtsopts
+
+test-suite metiv
+  hs-source-dirs: test
+  type: exitcode-stdio-1.0
+  main-is: m.hs
+  build-depends: base, ersatz, ersatz-kissatapi
