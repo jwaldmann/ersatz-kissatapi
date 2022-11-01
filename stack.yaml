@@ -6,4 +6,8 @@ packages:
 extra-deps:
 - git: https://github.com/jwaldmann/ersatz
   commit: 0d4a29d91d48d5a797ce556b9fb70f0af92fd422
+- git: https://github.com/jwaldmann/ersatz-minisatapi
+  commit: 0d4e3ba107d95687266452c4812905503c3d3c7d
 - timeout-0.1.1
+- minisat-0.1.3
+

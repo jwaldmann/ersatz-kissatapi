@@ -19,7 +19,8 @@ import Prelude hiding ((&&),(||),not, or, and,all,any )
 import qualified Data.Bool
 import qualified Prelude
 import Ersatz hiding (Run)
-import Ersatz.Solver.Kissat.API
+import qualified Ersatz.Solver.Kissat.API as ESKA
+import qualified Ersatz.Solver.Minisat.API as ESMA
 import Control.Monad (replicateM, forM_, when, join)
 import qualified Data.Array as A
 import Text.Printf
@@ -107,7 +108,7 @@ bestofi mto k action = do
   as <- mapM async $ flip map (take k  [0..])  $ \ i -> 
     ( case mto of
       Nothing -> (Just <$>)
-      Just to -> timeout (2 * to)
+      Just to -> timeout (1 * to)
       ) $ action i
   snd <$> waitAnyCancel as
 
@@ -169,7 +170,7 @@ od0 = let bool = (0,1) in M.fromList
 -- option values
 type OV = M.Map Text Int
 
-ov0 = ov10
+ov0 = ov12
 
 ovblank = M.fromList [("quiet",1)]
 
@@ -215,6 +216,10 @@ ov9 = M.fromList [("ands",0),("backbone",1),("bump",1),("bumpreasons",0),("chron
 
 ov10 = M.fromList [("ands",0),("backbone",0),("bump",1),("bumpreasons",0),("chrono",0),("compact",0),("definitions",1),("eliminate",1),("equivalences",1),("extract",0),("forcephase",1),("forward",0),("ifthenelse",0),("minimize",1),("minimizeticks",0),("otfs",0),("phase",0),("phasesaving",0),("probe",1),("promote",0),("quiet",1),("seed",0),("shrink",2),("simplify",1),("stable",2),("substitute",0),("sweep",0),("target",2),("tier1",18),("tier2",760),("tumble",0),("vivify",1),("walkinitially",1),("warmup",0)]
 
+ov11 = M.fromList [("ands",1),("backbone",1),("bump",1),("bumpreasons",0),("chrono",1),("compact",1),("definitions",0),("eliminate",1),("equivalences",0),("extract",1),("forcephase",1),("forward",0),("ifthenelse",1),("minimize",1),("minimizeticks",0),("otfs",0),("phase",0),("phasesaving",1),("probe",0),("promote",0),("quiet",1),("seed",0),("shrink",2),("simplify",0),("stable",0),("substitute",0),("sweep",0),("target",2),("tier1",23),("tier2",762),("tumble",0),("vivify",1),("walkinitially",1),("warmup",0)]
+
+ov12 = M.fromList [("ands",1),("backbone",1),("bump",1),("bumpreasons",0),("chrono",1),("compact",1),("definitions",0),("eliminate",1),("equivalences",0),("extract",0),("forcephase",1),("forward",0),("ifthenelse",0),("minimize",1),("minimizeticks",0),("otfs",0),("phase",0),("phasesaving",1),("probe",0),("promote",0),("quiet",1),("seed",0),("shrink",2),("simplify",0),("stable",0),("substitute",0),("sweep",0),("target",2),("tier1",23),("tier2",762),("tumble",0),("vivify",0),("walkinitially",0),("warmup",0)]
+
 data Run = Run { ov :: OV
                , val :: NominalDiffTime
                } deriving Show
@@ -223,7 +228,11 @@ solveWithKissat
   :: Codec a
   => OV -> StateT SAT IO a -> IO (Result , Maybe (Decoded a))
 solveWithKissat ov m =
-  solveWith (kissatapi_with $ map (uncurry Option) $ M.toList ov) m
+  solveWith (ESKA.kissatapi_with $ map (uncurry ESKA.Option) $ M.toList ov) m
+  -- solveWith ESKA.kissatapi m
+  -- solveWith (cryptominisat5Path "kissat") m
+  -- solveWith ESMA.minisatapi m -- CNF 725 vars 2816 clauses
+  -- solveWith minisat m -- variables: 649 clauses: 2753
 
 run
   :: OV
