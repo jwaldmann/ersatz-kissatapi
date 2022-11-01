@@ -6,7 +6,7 @@ import Ersatz.Solver.Kissat.API
 import Control.Monad (replicateM)
 
 main = do
-  let rw = 5; w = 10
+  let rw = 6; w = 11
   let go h = do
         handle rw w h >>= \ case
           Nothing -> return ()
@@ -17,12 +17,13 @@ main = do
   go 1
 
 {-
-          6    7    8   9  10  11  12
+          6    7    8   9   10  11  12
 
-rw = 2   10   13   17  21  26  31  37
-rw = 3   10   13   17  21  26  31  37
-rw = 4   15   21   31  41  56
-rw = 5   18   28   46  68  
+rw = 2   10   13   17  21   26  31  37
+rw = 3   10   13   17  21   26  31  37
+rw = 4   15   21   31  41   56  71  92
+rw = 5   18   28   46  68  105
+rw = 6   20   33   61  98  173
 
 
 0 (-> 1) -> c ; 0c -> 10; 1c -> c0

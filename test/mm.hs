@@ -220,9 +220,6 @@ ov11 = M.fromList [("ands",1),("backbone",1),("bump",1),("bumpreasons",0),("chro
 
 ov12 = M.fromList [("ands",1),("backbone",1),("bump",1),("bumpreasons",0),("chrono",1),("compact",1),("definitions",0),("eliminate",1),("equivalences",0),("extract",0),("forcephase",1),("forward",0),("ifthenelse",0),("minimize",1),("minimizeticks",0),("otfs",0),("phase",0),("phasesaving",1),("probe",0),("promote",0),("quiet",1),("seed",0),("shrink",2),("simplify",0),("stable",0),("substitute",0),("sweep",0),("target",2),("tier1",23),("tier2",762),("tumble",0),("vivify",0),("walkinitially",0),("warmup",0)]
 
-data Run = Run { ov :: OV
-               , val :: NominalDiffTime
-               } deriving Show
 
 solveWithKissat
   :: Codec a
@@ -307,21 +304,22 @@ instance (A.Ix i, Orderable e) => Orderable (A.Array i e) where
 -- with  foldr1: 55 sec
 -- with bfoldr1: 52 sec
 -- most of that time is spent for proving unsolvability for muls=6
+
+xors :: Boolean b => [b] -> b
 xors = bfoldr1 xor
 
-assert_xors (a:b:c : ds) = do
-  x <- exists
-  assert $ or [ not a, not b, not c,     x ]
-  assert $ or [ not a, not b,     c, not x ]
-  assert $ or [ not a,     b, not c, not x ]
-  assert $ or [     a, not b, not c, not x ]
-  assert $ or [ not a,     b,     c,     x ]
-  assert $ or [     a, not b,     c,     x ]
-  assert $ or [     a,     b, not c,     x ]
-  assert $ or [     a,     b,     c, not x ]
-  assert_xors $ x : ds 
-  
-assert_xors xs = assert $ xors xs
+-- assert_xors xs = assert $ xors xs
+
+assert_xors xs = do
+  let (pre, post) = splitAt 3 xs
+  if null post then assert_xors_plain pre else do
+      p <- exists
+      assert_xors_plain (not p : pre)
+      assert_xors $ id (<>) [p] post 
+assert_xors_plain xs =
+  forM_ (replicateM (length xs) [False,True]) $ \ fs -> do
+    let g f = if f then id else not
+    when (not $ xors fs) $ assert $ or $ zipWith g fs xs
 
 bfoldr1 op xs =
   let go [x] = x
