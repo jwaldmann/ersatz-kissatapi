@@ -13,6 +13,9 @@
 -- dim = 4 : muls =    
 -- dim = 5 : muls =    
 
+-- see Heule 2019 https://arxiv.org/abs/1905.10192
+-- for a SAT encoding with optimisation
+
 {-# language TypeApplications, OverloadedStrings, LambdaCase #-}
 
 import Prelude hiding ((&&),(||),not, or, and,all,any )
@@ -38,6 +41,8 @@ import Control.Concurrent.Async
 import System.IO
 import GHC.Conc
 import Control.Concurrent.STM
+import Data.Function (on)
+import qualified Ersatz.Counting as C
 
 main :: IO ()
 main = do
@@ -108,7 +113,7 @@ bestofi mto k action = do
   as <- mapM async $ flip map (take k  [0..])  $ \ i -> 
     ( case mto of
       Nothing -> (Just <$>)
-      Just to -> timeout (1 * to)
+      Just to -> timeout (2 * to)
       ) $ action i
   snd <$> waitAnyCancel as
 
@@ -170,7 +175,7 @@ od0 = let bool = (0,1) in M.fromList
 -- option values
 type OV = M.Map Text Int
 
-ov0 = ov12
+ov0 = ov19
 
 ovblank = M.fromList [("quiet",1)]
 
@@ -220,7 +225,20 @@ ov11 = M.fromList [("ands",1),("backbone",1),("bump",1),("bumpreasons",0),("chro
 
 ov12 = M.fromList [("ands",1),("backbone",1),("bump",1),("bumpreasons",0),("chrono",1),("compact",1),("definitions",0),("eliminate",1),("equivalences",0),("extract",0),("forcephase",1),("forward",0),("ifthenelse",0),("minimize",1),("minimizeticks",0),("otfs",0),("phase",0),("phasesaving",1),("probe",0),("promote",0),("quiet",1),("seed",0),("shrink",2),("simplify",0),("stable",0),("substitute",0),("sweep",0),("target",2),("tier1",23),("tier2",762),("tumble",0),("vivify",0),("walkinitially",0),("warmup",0)]
 
+ov13 = M.fromList [("ands",0),("backbone",2),("bump",1),("bumpreasons",0),("chrono",1),("compact",1),("definitions",1),("eliminate",0),("equivalences",1),("extract",1),("forcephase",1),("forward",1),("ifthenelse",0),("minimize",1),("minimizeticks",1),("otfs",0),("phase",0),("phasesaving",0),("probe",0),("promote",1),("quiet",1),("seed",0),("shrink",0),("simplify",1),("stable",1),("substitute",0),("sweep",0),("target",0),("tier1",27),("tier2",95),("tumble",0),("vivify",1),("walkinitially",0),("warmup",0)]
 
+ov14 = M.fromList[("ands",0),("backbone",2),("bump",1),("bumpreasons",1),("chrono",1),("compact",1),("definitions",1),("eliminate",0),("equivalences",1),("extract",1),("forcephase",0),("forward",1),("ifthenelse",0),("minimize",1),("minimizeticks",0),("otfs",0),("phase",0),("phasesaving",0),("probe",0),("promote",1),("quiet",1),("seed",0),("shrink",0),("simplify",1),("stable",2),("substitute",0),("sweep",0),("target",1),("tier1",27),("tier2",95),("tumble",0),("vivify",1),("walkinitially",0),("warmup",0)]
+
+ov15 = M.fromList [("ands",0),("backbone",1),("bump",1),("bumpreasons",1),("chrono",1),("compact",0),("definitions",0),("eliminate",1),("equivalences",1),("extract",0),("forcephase",0),("forward",0),("ifthenelse",0),("minimize",0),("minimizeticks",0),("otfs",1),("phase",0),("phasesaving",1),("probe",0),("promote",0),("quiet",1),("seed",0),("shrink",1),("simplify",1),("stable",2),("substitute",0),("sweep",0),("target",1),("tier1",26),("tier2",88),("tumble",0),("vivify",0),("walkinitially",1),("warmup",1)]
+
+ov16 = M.fromList [("ands",0),("backbone",0),("bump",1),("bumpreasons",1),("chrono",1),("compact",0),("definitions",0),("eliminate",1),("equivalences",0),("extract",0),("forcephase",0),("forward",0),("ifthenelse",1),("minimize",1),("minimizeticks",0),("otfs",1),("phase",0),("phasesaving",1),("probe",1),("promote",1),("quiet",1),("seed",0),("shrink",3),("simplify",1),("stable",0),("substitute",1),("sweep",0),("target",2),("tier1",29),("tier2",38),("tumble",0),("vivify",0),("walkinitially",0),("warmup",0)]
+
+ov17 = M.fromList [("ands",1),("backbone",1),("bump",1),("bumpreasons",1),("chrono",1),("compact",1),("definitions",0),("eliminate",0),("equivalences",0),("extract",0),("forcephase",1),("forward",1),("ifthenelse",1),("minimize",1),("minimizeticks",0),("otfs",1),("phase",0),("phasesaving",1),("probe",1),("promote",0),("quiet",1),("seed",0),("shrink",1),("simplify",1),("stable",1),("substitute",1),("sweep",1),("target",1),("tier1",30),("tier2",45),("tumble",1),("vivify",0),("walkinitially",1),("warmup",0)]
+
+ov18 = M.fromList [("ands",0),("backbone",1),("bump",1),("bumpreasons",1),("chrono",1),("compact",0),("definitions",0),("eliminate",0),("equivalences",1),("extract",0),("forcephase",1),("forward",1),("ifthenelse",0),("minimize",1),("minimizeticks",1),("otfs",1),("phase",0),("phasesaving",1),("probe",1),("promote",0),("quiet",1),("seed",0),("shrink",1),("simplify",1),("stable",1),("substitute",1),("sweep",0),("target",2),("tier1",48),("tier2",49),("tumble",1),("vivify",0),("walkinitially",0),("warmup",1)]
+
+ov19 = M.fromList [("ands",1),("backbone",0),("bump",1),("bumpreasons",1),("chrono",1),("compact",1),("definitions",1),("eliminate",0),("equivalences",1),("extract",0),("forcephase",1),("forward",1),("ifthenelse",1),("minimize",1),("minimizeticks",1),("otfs",1),("phase",0),("phasesaving",1),("probe",0),("promote",0),("quiet",1),("seed",0),("shrink",1),("simplify",1),("stable",2),("substitute",1),("sweep",1),("target",1),("tier1",49),("tier2",48),("tumble",1),("vivify",0),("walkinitially",1),("warmup",1)]
+  
 solveWithKissat
   :: Codec a
   => OV -> StateT SAT IO a -> IO (Result , Maybe (Decoded a))
@@ -230,6 +248,9 @@ solveWithKissat ov m =
   -- solveWith (cryptominisat5Path "kissat") m
   -- solveWith ESMA.minisatapi m -- CNF 725 vars 2816 clauses
   -- solveWith minisat m -- variables: 649 clauses: 2753
+
+data Run = Run { ov :: OV, val :: NominalDiffTime }
+  deriving Show
 
 run
   :: OV
@@ -271,7 +292,10 @@ mainfor ov dim muls = do
         mat = fmap (A.listArray bnd)
             $ replicateM (dim ^ 2) $ exists @Bit
     abcs <- replicateM muls $ replicateM 3 mat
-    when False $ assert $ and (zipWith (<?) abcs $ tail abcs) 
+    when False $ assert $ and $ do
+      abc <- abcs; return $ C.atmost 8 $ concat $ map A.elems abc
+    when False $ assert $ and (zipWith ((<?) `on` reverse) abcs $ tail abcs) 
+    when False $ assert $ and (zipWith ((<?) `on` last) abcs $ tail abcs) 
     -- forM_ (replicateM 6 range) $ \ [ai,aj, bi,bj, ci,cj] -> do
     forM_ (A.range bnd) $ \ (ai,aj) ->
       forM_ (A.range bnd) $ \ (bi,bj) ->
@@ -282,7 +306,9 @@ mainfor ov dim muls = do
                 [a,b,c] <- abcs
                 return $ a A.! (ai,aj) && b A.! (bi,bj) && c A.! (ci,cj)
           -- assert $ encode want === have
-          assert_xors $ not (encode want) : haves
+          if want
+            then simple_assert_xors haves
+            else simple_assert_not_xors haves
     return abcs
   case out of
     (Satisfied, Just abcs) -> do
@@ -305,17 +331,37 @@ instance (A.Ix i, Orderable e) => Orderable (A.Array i e) where
 -- with bfoldr1: 52 sec
 -- most of that time is spent for proving unsolvability for muls=6
 
-xors :: Boolean b => [b] -> b
-xors = bfoldr1 xor
+subs 0 xs = [[]]
+subs k [] = []
+subs k (x:xs) = fmap (x:) (subs (k-1) xs) <> subs k xs
 
--- assert_xors xs = assert $ xors xs
+xors :: Boolean b => [b] -> b
+xors =  bfoldr1 xor
+
+ucount k xs = foldr tick (replicate k false) xs
+tick x xs = zipWith (\ l r -> choose l r x) xs (true : xs)
+
+atleast k xs = or $ do ys <- subs k xs; return $ and ys
+atmost  k xs = not $ atleast (k+1) xs
+exactly k xs = atleast k xs && atmost k xs
+
+simple_assert_not_xors xs = do
+  let [c1,c2,c3] = ucount 3 xs
+  assert $ (not c1) || (c2 && not c3)
+  -- assert $ C.atmost 2 xs && not (exactly 1 xs)
+  
+simple_assert_xors xs = do
+  let [c1,c2,c3,c4] = ucount 4 xs
+  assert $ (c1 && not c2) || (c3 && not c4)
+  -- assert $ exactly 1 xs
+
 
 assert_xors xs = do
   let (pre, post) = splitAt 3 xs
   if null post then assert_xors_plain pre else do
       p <- exists
-      assert_xors_plain (not p : pre)
-      assert_xors $ id (<>) [p] post 
+      assert_xors_plain (not p : init pre)
+      assert_xors $ [last pre, p] <> post
 assert_xors_plain xs =
   forM_ (replicateM (length xs) [False,True]) $ \ fs -> do
     let g f = if f then id else not
