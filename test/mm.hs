@@ -42,6 +42,7 @@ import System.IO
 import GHC.Conc
 import Control.Concurrent.STM
 import Data.Function (on)
+import Data.List (genericLength,transpose)
 import qualified Ersatz.Counting as C
 
 main :: IO ()
@@ -113,7 +114,7 @@ bestofi mto k action = do
   as <- mapM async $ flip map (take k  [0..])  $ \ i -> 
     ( case mto of
       Nothing -> (Just <$>)
-      Just to -> timeout (2 * to)
+      Just to -> timeout (1 * to)
       ) $ action i
   snd <$> waitAnyCancel as
 
@@ -175,7 +176,7 @@ od0 = let bool = (0,1) in M.fromList
 -- option values
 type OV = M.Map Text Int
 
-ov0 = ov19
+ov0 = ov21
 
 ovblank = M.fromList [("quiet",1)]
 
@@ -238,6 +239,10 @@ ov17 = M.fromList [("ands",1),("backbone",1),("bump",1),("bumpreasons",1),("chro
 ov18 = M.fromList [("ands",0),("backbone",1),("bump",1),("bumpreasons",1),("chrono",1),("compact",0),("definitions",0),("eliminate",0),("equivalences",1),("extract",0),("forcephase",1),("forward",1),("ifthenelse",0),("minimize",1),("minimizeticks",1),("otfs",1),("phase",0),("phasesaving",1),("probe",1),("promote",0),("quiet",1),("seed",0),("shrink",1),("simplify",1),("stable",1),("substitute",1),("sweep",0),("target",2),("tier1",48),("tier2",49),("tumble",1),("vivify",0),("walkinitially",0),("warmup",1)]
 
 ov19 = M.fromList [("ands",1),("backbone",0),("bump",1),("bumpreasons",1),("chrono",1),("compact",1),("definitions",1),("eliminate",0),("equivalences",1),("extract",0),("forcephase",1),("forward",1),("ifthenelse",1),("minimize",1),("minimizeticks",1),("otfs",1),("phase",0),("phasesaving",1),("probe",0),("promote",0),("quiet",1),("seed",0),("shrink",1),("simplify",1),("stable",2),("substitute",1),("sweep",1),("target",1),("tier1",49),("tier2",48),("tumble",1),("vivify",0),("walkinitially",1),("warmup",1)]
+
+ov20 = M.fromList [("ands",0),("backbone",1),("bump",1),("bumpreasons",1),("chrono",1),("compact",0),("definitions",0),("eliminate",1),("equivalences",0),("extract",0),("forcephase",1),("forward",0),("ifthenelse",1),("minimize",1),("minimizeticks",0),("otfs",1),("phase",0),("phasesaving",1),("probe",0),("promote",0),("quiet",1),("seed",0),("shrink",1),("simplify",1),("stable",2),("substitute",0),("sweep",0),("target",1),("tier1",48),("tier2",46),("tumble",1),("vivify",0),("walkinitially",0),("warmup",1)]
+
+ov21 = M.fromList [("ands",0),("backbone",2),("bump",1),("bumpreasons",1),("chrono",1),("compact",1),("definitions",0),("eliminate",0),("equivalences",0),("extract",1),("forcephase",1),("forward",0),("ifthenelse",1),("minimize",0),("minimizeticks",1),("otfs",1),("phase",0),("phasesaving",1),("probe",1),("promote",0),("quiet",1),("seed",0),("shrink",1),("simplify",1),("stable",2),("substitute",1),("sweep",0),("target",0),("tier1",48),("tier2",46),("tumble",1),("vivify",1),("walkinitially",0),("warmup",1)]
   
 solveWithKissat
   :: Codec a
@@ -292,11 +297,6 @@ mainfor ov dim muls = do
         mat = fmap (A.listArray bnd)
             $ replicateM (dim ^ 2) $ exists @Bit
     abcs <- replicateM muls $ replicateM 3 mat
-    when False $ assert $ and $ do
-      abc <- abcs; return $ C.atmost 8 $ concat $ map A.elems abc
-    when False $ assert $ and (zipWith ((<?) `on` reverse) abcs $ tail abcs) 
-    when False $ assert $ and (zipWith ((<?) `on` last) abcs $ tail abcs) 
-    -- forM_ (replicateM 6 range) $ \ [ai,aj, bi,bj, ci,cj] -> do
     forM_ (A.range bnd) $ \ (ai,aj) ->
       forM_ (A.range bnd) $ \ (bi,bj) ->
         forM_ (A.range bnd) $ \ (ci,cj) -> do
@@ -306,9 +306,19 @@ mainfor ov dim muls = do
                 [a,b,c] <- abcs
                 return $ a A.! (ai,aj) && b A.! (bi,bj) && c A.! (ci,cj)
           -- assert $ encode want === have
+          let xs = encode want : haves
+
+          let k = 2
+              c = ocount k xs
+                  -- diff (true : ucount (k+1) xs)
+          assert $ any (c !!) [0, 2 .. k]
+          -- assert_xors 4 $ not (encode want) : haves
+          -- simple_assert_xors 3 $ not (encode want) : haves
+          {-
           if want
-            then simple_assert_xors haves
-            else simple_assert_not_xors haves
+            then simple_assert_xors     4 haves
+            else simple_assert_not_xors 5 haves
+          -}
     return abcs
   case out of
     (Satisfied, Just abcs) -> do
@@ -338,30 +348,50 @@ subs k (x:xs) = fmap (x:) (subs (k-1) xs) <> subs k xs
 xors :: Boolean b => [b] -> b
 xors =  bfoldr1 xor
 
-ucount k xs = foldr tick (replicate k false) xs
-tick x xs = zipWith (\ l r -> choose l r x) xs (true : xs)
+-- unary (order) encoding
+-- ucount k xs = map (\ c -> atleast c xs ) [1 .. k ]  -- NOTE: starts at 1
+ucount k xs = foldr utick (replicate k false) xs
+utick x xs = zipWith (\ l r -> choose l r x) xs (true : xs)
+
+-- one-hot encoding
+-- ocount k xs = map (\ c -> exactly c xs ) [0 .. k ] 
+ocount k xs = foldr otick (true : replicate k false) xs
+otick x xs = zipWith (\ l r -> choose l r x) xs (false : xs)
+
+diff xs = zipWith (\x y -> x && not y) xs (tail xs)
 
 atleast k xs = or $ do ys <- subs k xs; return $ and ys
 atmost  k xs = not $ atleast (k+1) xs
 exactly k xs = atleast k xs && atmost k xs
 
-simple_assert_not_xors xs = do
-  let [c1,c2,c3] = ucount 3 xs
-  assert $ (not c1) || (c2 && not c3)
-  -- assert $ C.atmost 2 xs && not (exactly 1 xs)
-  
-simple_assert_xors xs = do
-  let [c1,c2,c3,c4] = ucount 4 xs
-  assert $ (c1 && not c2) || (c3 && not c4)
-  -- assert $ exactly 1 xs
+atleast_u k xs = last $ ucount k xs
+atmost_u  k xs = not $ atleast_u (k+1) xs
+exactly_u k xs =
+  let p:q:_ = reverse $ ucount (k+1) xs in not p && q
 
+exactlyM k xs = do
+  a <- replicateM (length xs) $ replicateM k $ exists @Bit
+  assert $ flip all (transpose a) (C.exactly 1)
+  assert $ flip all             a (C.atmost 1)
+  return $ xs === map or a
 
-assert_xors xs = do
-  let (pre, post) = splitAt 3 xs
+simple_assert_xors k xs = do
+  let cs = ucount k xs
+  assert $ flip any [0, 2 .. k-2] $ \ i ->
+    cs !! i && not (cs !! (i+1))
+
+simple_assert_not_xors k xs = do
+  let cs = ucount k xs
+  assert $ flip any [-1, 1 .. k-2] $ \ i ->
+    (if i < 0 then true else cs !! i) && not (cs !! (i+1))
+
+assert_xors k xs = do
+  let (pre, post) = splitAt k xs
   if null post then assert_xors_plain pre else do
       p <- exists
       assert_xors_plain (not p : init pre)
-      assert_xors $ [last pre, p] <> post
+      assert_xors k $ [last pre, p] <> post
+
 assert_xors_plain xs =
   forM_ (replicateM (length xs) [False,True]) $ \ fs -> do
     let g f = if f then id else not
