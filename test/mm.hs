@@ -119,7 +119,7 @@ bestofi mto k action = do
   as <- mapM async $ flip map (take k  [0..])  $ \ i -> 
     ( case mto of
       Nothing -> (Just <$>)
-      Just to -> timeout (1.5 * to)
+      Just to -> timeout (1 * to)
       ) $ action i
   snd <$> waitAnyCancel as
 
@@ -130,7 +130,10 @@ change od ov = do
   (k,bnd@(lo,hi)) <- pick od
   v' <- case M.lookup k ov of
     Nothing -> randomRIO (lo, hi)
-    Just v -> randomRIO  (max lo $ v-1, min hi $ v+1)
+    Just v -> do
+      e <- randomRIO (0, 10::Int)
+      let d = 2 ^ e
+      randomRIO  (max lo $ v-d, min hi $ v+d)
   return $ M.insert k v' ov
   
 pick m = do
@@ -140,8 +143,55 @@ pick m = do
 -- option descriptions, each with admissible range of values 
 type OD = M.Map Text (Int,Int)
 
+
+-- https://github.com/arminbiere/kissat/issues/25#issuecomment-1157869723
+goodset :: OD
+goodset = let bool = (0,1); num = (0, 2^10) in M.fromList
+  [ ("tier1", (1, 100))
+  , ("chrono", bool)
+  , ("stable", (0,2))
+  , ("walkinitially", bool)
+  , ("target", (0,2))
+  , ("phase", bool)
+  , ("shrink", bool)
+--  , ("sweep", bool)
+  , ("sweepclauses", num)
+  , ("sweepdepth", num)
+  , ("sweepeffort", num)
+  , ("sweepfliprounds", num)
+  , ("sweepmaxclauses", num)
+  , ("sweepmaxdepth", num)
+  , ("sweepmaxvars", num)
+  , ("sweepvars", num)
+  ]
+
+ov0 = g5
+
+g0 = M.fromList 
+  [ ("quiet", 1)
+  , ("tier1", 1)
+  , ("chrono", 1)
+  , ("stable", 1)
+  , ("walkinitially", 1)
+  , ("target", 1)
+  , ("phase", 1)
+  , ("shrink", 1)
+  , ("sweep", 1)
+  ]
+
+g1 = M.fromList [("chrono",0),("phase",0),("quiet",1),("shrink",1),("stable",1),("sweep",0),("sweepclauses",73),("sweepdepth",1010),("sweepeffort",884),("sweepfliprounds",629),("sweepmaxclauses",179),("sweepmaxdepth",117),("sweepmaxvars",913),("sweepvars",315),("target",2),("tier1",2),("walkinitially",0)]
+
+g2 = M.fromList [("bump",1),("bumpreasons",1),("chrono",1),("compact",1),("definitions",0),("eliminate",0),("equivalences",0),("extract",1),("forward",0),("ifthenelse",0),("minimize",1),("phase",1),("phasesaving",1),("probe",1),("promote",0),("quiet",1),("seed",0),("shrink",2),("simplify",0),("stable",1),("sweep",1),("sweepclauses",1469),("sweepdepth",2450),("sweepeffort",3862),("sweepmaxdepth",3911),("sweepvars",3902),("target",1),("tier1",1),("vivify",0),("walkinitially",1),("warmup",1)]
+  
+g3 = M.fromList [("backbone",2),("bump",1),("bumpreasons",1),("chrono",1),("compact",0),("definitions",0),("eliminate",0),("equivalences",0),("extract",1),("forward",1),("ifthenelse",0),("minimize",1),("phase",1),("phasesaving",1),("probe",1),("promote",0),("quiet",1),("seed",0),("shrink",2),("simplify",0),("stable",1),("substitute",1),("sweep",1),("sweepclauses",458),("sweepdepth",2450),("sweepeffort",3769),("sweepmaxdepth",3900),("sweepmaxvars",898),("sweepvars",3830),("target",1),("tier1",1),("tumble",1),("vivify",0),("walkinitially",1),("warmup",1)]
+
+g4 = M.fromList [("ands",0),("backbone",2),("bumpreasons",1),("chrono",1),("forcephase",0),("forward",1),("phase",1),("promote",0),("quiet",1),("shrink",1),("stable",1),("sweep",1),("sweepclauses",1073),("sweepdepth",4044),("sweepmaxdepth",2178),("target",1),("tier1",1),("tier2",366),("vivify",1),("walkinitially",0)]
+
+-- works for  d = 3, m = 23
+g5 = M.fromList [("ands",0),("backbone",2),("bumpreasons",1),("chrono",1),("definitions",1),("eliminate",0),("equivalences",0),("forcephase",1),("forward",1),("otfs",0),("phase",0),("promote",0),("quiet",1),("shrink",1),("stable",2),("sweep",1),("sweepclauses",1073),("sweepdepth",4044),("sweepfliprounds",2033),("sweepmaxdepth",2175),("sweepmaxvars",2792),("sweepvars",2867),("target",1),("tier1",1),("tier2",425),("vivify",0),("walkinitially",0),("warmup",1)]
+
 od0 :: OD
-od0 = let bool = (0,1) in M.fromList
+od0 = let bool = (0,1) ; num = (0, 2^12) in M.fromList
   [ ("ands", bool)
   , ("backbone", (0,2))
   , ("bump", bool)
@@ -162,7 +212,7 @@ od0 = let bool = (0,1) in M.fromList
   , ("phasesaving", bool)
   , ("probe", bool)
   , ("promote", bool)
---  , ("quiet", (1,1))
+  , ("quiet", (1,1))
   , ("seed", (0,0))
   , ("shrink", (0,3))
   , ("simplify", bool)
@@ -176,12 +226,20 @@ od0 = let bool = (0,1) in M.fromList
   , ("vivify", bool)
   , ("walkinitially", bool)
   , ("warmup", bool)
+  , ("sweep", (1,1))
+  , ("sweepclauses", num)
+  , ("sweepdepth", num)
+  , ("sweepeffort", num)
+  , ("sweepfliprounds", num)
+  , ("sweepmaxclauses", num)
+  , ("sweepmaxdepth", num)
+  , ("sweepmaxvars", num)
+  , ("sweepvars", num)
   ]
 
 -- option values
 type OV = M.Map Text Int
 
-ov0 = ov23
 
 ovblank = M.fromList [("quiet",1)]
 
