@@ -12,7 +12,7 @@ import Control.Lens hiding (Setting)
 import qualified Kissat.API as API
 import Control.Applicative ((<$>))
 
-import Control.Monad (forM)
+import Control.Monad (forM, when)
 import Data.Foldable (forM_)
 
 import System.IO
@@ -39,7 +39,7 @@ kissatapi_with settings problem = do
 
     let v = maximum $ map abs $ concatMap S.toList cls
         c = length cls
-    hPutStrLn stderr $ unwords
+    when False $ hPutStrLn stderr $ unwords
       [ "CNF", show v, "vars", show c , "clauses"]
     
     forM_ cls $ \clause -> do
